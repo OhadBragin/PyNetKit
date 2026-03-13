@@ -58,6 +58,47 @@ def print_warning_panel(msg, title="Warning"):
         expand=False
     ))
 
+
+def resolve_iface(iface_arg):
+    """
+    Validate and normalize a user-supplied interface argument.
+    - If an interface is supplied, try to match it by description or name.
+      On success, set scapy's default iface and return the normalized name.
+      On failure, print a helpful error + available interfaces and exit.
+    - If no interface is supplied, warn and fall back to scapy's default.
+    """
+    if iface_arg:
+        available_ifaces = get_working_ifaces()
+        matched_iface = None
+        for i in available_ifaces:
+            if iface_arg == i.description or iface_arg == i.name:
+                matched_iface = i
+                break
+
+        if matched_iface:
+            conf.iface = matched_iface.name
+            return matched_iface.name
+
+        friendly_names = [i.description for i in available_ifaces]
+        print_error_panel(f"'{iface_arg}' not found.")
+        print_warning_panel(
+            f"Available interfaces:\n[muted_light]{'\n'.join(friendly_names)}[/]",
+            title="Interfaces"
+        )
+        sys.exit(1)
+
+    # No iface provided: fall back to scapy's default interface
+    print_warning_panel(
+        f"No interface provided! It is recommended to specify an interface.\n"
+        f"Defaulting to: [info_bold]{conf.iface.description}[/]",
+        title="Missing Interface"
+    )
+
+    # Ensure we return a usable interface name for downstream code
+    if hasattr(conf.iface, "name"):
+        return conf.iface.name
+    return str(conf.iface)
+
 def run_host_scan(*, ip_range, iface, port_range=None):
     console.print()
     console.print(Rule(title=f"[info_bold]Starting Network Mapper scan on {ip_range}...[/]", style="border"))
@@ -254,6 +295,9 @@ def get_args():
     - args.target: (str) The victim IP address.
     - args.gateway: (str) The gateway (router) IP address.
     - args.iface: (str) The network interface to use.
+
+    If args.command == 'DOS':
+    - args.ifacae (str) The network interface to use
     
     :return: argparse.Namespace object containing the parsed arguments.
     """
@@ -264,7 +308,8 @@ def get_args():
 
     # gui - flag - above other args
     parser.add_argument("-g", "--gui", action="store_true",
-                        help="Start the application in Graphical Mode.\nIf used, all other arguments are ignored.")
+                        help="Start the application in Graphical Mode.\n"
+                        "If used, all other arguments are ignored.")
 
     subparses = parser.add_subparsers(dest="command", help='commands')
 
@@ -300,6 +345,17 @@ def get_args():
     arp_p.add_argument("-i", "--iface", help="Network interface (e.g. eth0).\n"
                             "ADVICE: Manual selection is highly recommended.")
 
+    # --- Dos Attack ---
+    dos_p = subparses.add_parser(
+        "DOS",
+        help="Perform DoS attack",
+        formatter_class = RawTextRichHelpFormatter
+        aliases=["dos"]
+    )
+    
+    #iface - flag
+    dos_p.add_argument("-i", "--iface", help="Network interface (e.g. eth0).\n"
+                            "ADVICE: Manual selection is highly recommended.")
 
     args = parser.parse_args()
 
@@ -330,34 +386,7 @@ def get_args():
         if not is_valid_ip(args.target):
             print_error_panel(f"'{args.target}' is not a valid IPv4 address or CIDR range.")
             sys.exit(1)
-        if args.iface:
-            # get a list of all active Scapy interface objects
-            available_ifaces = get_working_ifaces()
-
-            # try to find a match by Name (GUID) OR desc (friendly name)
-            matched_iface = None
-            for i in get_working_ifaces():
-                if args.iface == i.description or args.iface == i.name:
-                    matched_iface = i
-                    break
-
-            if matched_iface:
-                # override the argument with the actual GUID/Name Scapy needs
-                args.iface = matched_iface.name
-                conf.iface = matched_iface.name
-            else:
-                # create a clean list of friendly names to show the user in the error
-                friendly_names = [i.description for i in available_ifaces]
-                print_error_panel(f"'{args.iface}' not found.")
-                print_warning_panel(f"Available interfaces:\n[muted_light]{'\n'.join(friendly_names)}[/]", title="Interfaces")
-                sys.exit(1)
-        else:
-            # User didn't provide one; Scapy will try to use 'conf.iface'
-            print_warning_panel(
-                f"No interface provided! It is recommended to specify an interface.\n"
-                f"Defaulting to: [info_bold]{conf.iface.description}[/]",
-                title="Missing Interface"
-            )
+        args.iface = resolve_iface(args.iface)
 
     # --- ARP ---
     elif args.command == "ARP":
@@ -367,27 +396,7 @@ def get_args():
         if not is_valid_ip(args.gateway):
             print_error_panel(f"Gateway '{args.gateway}' is not a valid IPv4 address.")
             sys.exit(1)
-        if args.iface:
-            available_ifaces = get_working_ifaces()
-            matched_iface = None
-            for i in get_working_ifaces():
-                if args.iface == i.description or args.iface == i.name:
-                    matched_iface = i
-                    break
-            if matched_iface:
-                args.iface = matched_iface.name
-                conf.iface = matched_iface.name
-            else:
-                friendly_names = [i.description for i in available_ifaces]
-                print_error_panel(f"'{args.iface}' not found.")
-                print_warning_panel(f"Available interfaces:\n[muted_light]{'\n'.join(friendly_names)}[/]", title="Interfaces")
-                sys.exit(1)
-        else:
-            print_warning_panel(
-                f"No interface provided! It is recommended to specify an interface.\n"
-                f"Defaulting to: [info_bold]{conf.iface.description}[/]",
-                title="Missing Interface"
-            )
+        args.iface = resolve_iface(args.iface)
 
     return args
 

