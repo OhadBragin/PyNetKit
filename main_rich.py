@@ -10,7 +10,6 @@ from utils import is_valid_ip, is_valid_port, is_admin, get_target_mac
 import time
 import argparse
 from rich_argparse import RawTextRichHelpFormatter
-import gui
 
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -62,9 +61,9 @@ def resolve_iface(iface_arg):
     """
     Validate and normalize a user-supplied interface argument.
     - If an interface is supplied, try to match it by description or name.
-      On success, set scapy's default iface and return the normalized name.
+      On success, return the normalized name.
       On failure, print a helpful error + available interfaces and exit.
-    - If no interface is supplied, warn and fall back to scapy's default.
+    - If no interface is supplied, warn and return scapy's default.
     """
     if iface_arg:
         available_ifaces = get_working_ifaces()
@@ -75,13 +74,13 @@ def resolve_iface(iface_arg):
                 break
 
         if matched_iface:
-            conf.iface = matched_iface.name
             return matched_iface.name
 
         friendly_names = [i.description for i in available_ifaces]
+        interfaces_str = '\n'.join(friendly_names)
         print_error_panel(f"'{iface_arg}' not found.")
         print_warning_panel(
-            f"Available interfaces:\n[muted_light]{'\n'.join(friendly_names)}[/]",
+            f"Available interfaces:\n[muted_light]{interfaces_str}[/]",
             title="Interfaces"
         )
         sys.exit(1)
@@ -102,7 +101,9 @@ def run_host_scan(*, ip_range, iface, port_range=None):
     console.print()
     console.print(Rule(title=f"[info_bold]Starting Network Mapper scan on {ip_range}...[/]", style="border"))
     app = scanner.NetworkScanner(ip_range=ip_range, port_range=port_range, iface=iface)
-    app.discover_hosts()
+    
+    with console.status("[muted]Discovering hosts (ARP)...[/]"):
+        app.discover_hosts()
     
     if not app.hosts:
         console.print("[muted]No hosts found.[/]")
@@ -151,7 +152,7 @@ def run_host_scan(*, ip_range, iface, port_range=None):
     console.print(Rule(title="[info_bold]Scan complete.[/]", style="border"))
     console.print()
 
-def arp_spoof(*, target_ip, gateway_ip, iface):
+def arp_spoof(*, target_ip, gateway_ip, iface, do_save=False):
     console.print()
     console.print(Rule(title="[info_bold]Starting ARP Spoofing Attack...[/]", style="border"))
     
@@ -161,10 +162,10 @@ def arp_spoof(*, target_ip, gateway_ip, iface):
     
     if not target_mac:
         print_error_panel(f"Could not resolve MAC address for target {target_ip}")
-        return
+        sys.exit(1)
     if not gateway_mac:
         print_error_panel(f"Could not resolve MAC address for gateway {gateway_ip}")
-        return
+        sys.exit(1)
         
     target = models.Host(ip_address=target_ip, mac_address=target_mac)
     gateway = models.Host(ip_address=gateway_ip, mac_address=gateway_mac)
@@ -184,10 +185,12 @@ def arp_spoof(*, target_ip, gateway_ip, iface):
     )
     console.print(panel)
     
-    arp_poison = attacks.ArpPoisoning(target=target, gateway=gateway, iface=iface)
+    arp_poison = attacks.ArpPoisoning(target=target, gateway=gateway, iface=iface, do_save=do_save)
     arp_poison.start()
     
     console.print("\n[success_bold]Attack is running![/] [muted]Traffic is being intercepted and forwarded.[/]")
+    if do_save:
+        console.print(f"[success]Saving packets to:[/] [info_bold]{arp_poison.pcap_filename}[/]")
     
     ws_filter = f"ip.addr == {target_ip}"
     console.print(f"[info]💡 Tip:[/] [muted_light]Open Wireshark on [info_bold]{iface}[/] and use this filter to see the target's traffic:[/]")
@@ -200,6 +203,23 @@ def arp_spoof(*, target_ip, gateway_ip, iface):
     finally:
         console.print("[warning]Stopping attack and restoring ARP tables...[/]")
         arp_poison.stop()
+        console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
+        console.print()
+
+def run_dos(*, iface):
+    console.print()
+    console.print(Rule(title="[info_bold]Starting DHCP DoS Attack...[/]", style="border"))
+    dos_attack = attacks.DoS(iface=iface)
+    dos_attack.start()
+    console.print("\n[success_bold]Attack is running![/] [muted]Flooding network with DHCP Discover packets.[/]")
+    
+    try:
+        console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
+    except KeyboardInterrupt:
+        console.print()
+    finally:
+        console.print("[warning]Stopping DoS attack...[/]")
+        dos_attack.stop()
         console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
         console.print()
 
@@ -308,7 +328,7 @@ def get_args():
     - args.iface: (str) The network interface to use.
 
     If args.command == 'DOS':
-    - args.ifacae (str) The network interface to use
+    - args.iface (str) The network interface to use
     
     :return: argparse.Namespace object containing the parsed arguments.
     """
@@ -355,6 +375,8 @@ def get_args():
     #iface - flag
     arp_p.add_argument("-i", "--iface", help="Network interface (e.g. eth0).\n"
                             "ADVICE: Manual selection is highly recommended.")
+    #save - flag
+    arp_p.add_argument("-s", "--save", action="store_true", help="Save intercepted packets to a pcap file")
 
     # --- Dos Attack ---
     dos_p = subparses.add_parser(
@@ -419,6 +441,10 @@ def get_args():
             sys.exit(1)
         args.iface = resolve_iface(args.iface)
 
+    # --- DOS ---
+    elif args.command == "DOS":
+        args.iface = resolve_iface(args.iface)
+
     # --- TRACE ---
     elif args.command == "TRACE":
         pass
@@ -432,6 +458,7 @@ def main():
         sys.exit(1)
     args = get_args()
     if args.gui:
+        import gui
         print("Starting GUI...")
         app = gui.NetworkMapperGUI()
         app.mainloop()
@@ -441,7 +468,9 @@ def main():
         else:
             run_host_scan(ip_range=args.target, iface=args.iface)
     elif args.command == "ARP":
-        arp_spoof(target_ip=args.target, gateway_ip=args.gateway, iface=args.iface)
+        arp_spoof(target_ip=args.target, gateway_ip=args.gateway, iface=args.iface, do_save=args.save)
+    elif args.command == "DOS":
+        run_dos(iface=args.iface)
     elif args.command == "TRACE":
         trace_scan(target=args.target, max_hops=args.max_hops)
 

