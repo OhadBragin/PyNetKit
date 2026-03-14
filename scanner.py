@@ -1,6 +1,11 @@
 from scapy.all import *
+from scapy.layers.dns import DNS, DNSQR
 from scapy.layers.inet import IP, TCP, UDP
 from scapy.layers.l2 import ARP, Ether
+import logging
+
+# Suppress scapy runtime warnings (e.g. "MAC address to reach destination not found")
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 
 import models
 from utils import broad_os_map
@@ -78,5 +83,52 @@ class NetworkScanner:
                 port = models.Port(port_number=port_num, status="open", service=service)
                 host_obj.add_port(port)
                 host_obj.os = broad_os_map(rsp[IP].ttl)
+class TraceScanner:
+    def __init__(self, *,  target_ip, max_hops):
+        self.target_ip = target_ip
+        self.max_hops = max_hops
+        self.path = []
+
+    @staticmethod
+    def resolve_hostname(hostname):
+        """
+        translates hostname to an IP address using an A type DNS query.
+        :param hostname:
+        :return: IP address of the host
+        """
+        #We ask google's DNS server
+        pkt = IP(dst="8.8.8.8") / UDP(dport=53) / DNS(rd=1, qd=DNSQR(qname=hostname, qtype="A"))
+        rsp = sr1(pkt, timeout=2, verbose=False)
+        if rsp and rsp.haslayer(DNS) and rsp[DNS].ancount > 0:
+            return rsp[DNS].an[0].rdata
+        else:
+            return None
+    def craft_packet(self, ttl):
+        """
+        Crafts an ICMP Echo Request packet with the specified TTL
+        to be sent to the target IP for traceroute purposes.
+        :param ttl:
+        :return:
+        """
+        pkt = IP(dst=self.target_ip, ttl=ttl) / ICMP()
+        return pkt
+    def run_trace(self):
+        for ttl in range(1, self.max_hops + 1):
+            pkt = self.craft_packet(ttl)
+            start_time = time.time()
+            ans = sr1(pkt, timeout=1, verbose=False)
+            end_time = time.time()
+            rtt = round((end_time - start_time) * 1000, 2)
+            
+            if ans is None:
+                self.path.append({"hop": ttl, "ip": "*", "time": "*"})
+                continue
+            else:
+                self.path.append({"hop": ttl, "ip": ans.src, "time": f"{rtt} ms"})
+                if ans.src == self.target_ip:
+                    self.is_running = False
+                    break
+    def start(self):
+        self.run_trace()
 
 

@@ -58,7 +58,6 @@ def print_warning_panel(msg, title="Warning"):
         expand=False
     ))
 
-
 def resolve_iface(iface_arg):
     """
     Validate and normalize a user-supplied interface argument.
@@ -152,8 +151,6 @@ def run_host_scan(*, ip_range, iface, port_range=None):
     console.print(Rule(title="[info_bold]Scan complete.[/]", style="border"))
     console.print()
 
-
-
 def arp_spoof(*, target_ip, gateway_ip, iface):
     console.print()
     console.print(Rule(title="[info_bold]Starting ARP Spoofing Attack...[/]", style="border"))
@@ -206,44 +203,58 @@ def arp_spoof(*, target_ip, gateway_ip, iface):
         console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
         console.print()
 
-def run_cli(ip_range, port_range, iface):
-    """
-    runs the CLI version of the network mapper
-    :param ip_range: IP range to scan. can be a single ip
-    :param port_range: Port range to scan. default is 1-1024. can be a single port
-    :param iface: iface to perform scan on. if None, Scapy will use default
-    :return:
-    """
-    print("--- Network Mapper CLI ---")
-    print(f"Starting host discovery on {ip_range}...")
-    app = scanner.NetworkScanner(ip_range, port_range)
-    discovered_hosts = app.run_scan(iface)
+def trace_scan(*, target, max_hops=30):
+    target_ip = target
+    if not is_valid_ip(target):
+        with console.status(f"[muted]Resolving hostname '{target}'...[/]"):
+            resolved_ip = scanner.TraceScanner.resolve_hostname(target)
+        if not resolved_ip:
+            print_error_panel(f"Could not resolve hostname: '{target}'.\nPlease provide a valid IPv4 address or domain.")
+            sys.exit(1)
+        console.print(f"🌍 [success]Resolved '{target}' to {resolved_ip}[/]")
+        target_ip = resolved_ip
+
+    console.print()
+    console.print(Rule(title=f"[info_bold]Starting Trace Route to {target}...[/]", style="border"))
     
-    if not discovered_hosts:
-        print("No hosts found.")
+    app = scanner.TraceScanner(target_ip=target_ip, max_hops=max_hops)
+    
+    with console.status(f"[success_bold]Tracing route to {target_ip} (max hops: {max_hops})..."):
+        app.start()
+        
+    if not app.path:
+        console.print("[muted]No hops found or target unreachable.[/]")
+        console.print(Rule(style="border"))
+        console.print()
         return
 
-    for i, host in enumerate(discovered_hosts):
-        print(f"[{i}] Host: {host.ip_address} ({host.mac_address})")
+    table = Table(box=None, padding=(0, 3))
+    table.add_column("HOP", style="info", justify="right")
+    table.add_column("TIME", style="muted", justify="right")
+    table.add_column("IP ADDRESS")
 
-    # Example of manual port scan for a specific host
-    choice = 0 # Let's pick the first one for demonstration
-    target_host = discovered_hosts[choice]
-    print(f"\nScanning ports for {target_host.ip_address}...")
-    app.scan_ports(target_host, iface)
+    for hop_data in app.path:
+        hop_num = str(hop_data["hop"])
+        ip = hop_data["ip"]
+        rtt = hop_data["time"]
+        table.add_row(hop_num, rtt, f"[success_bold]{ip}[/]" if ip == target_ip else ip)
+
+    panel = Panel(
+        table,
+        title=f"[info_bold]Trace Route Complete[/] - {len(app.path)} hops",
+        title_align="center",
+        border_style="border",
+        expand=False
+    )
+    console.print(panel)
     
-    print(f"OS: {target_host.os}")
-    for port in target_host.ports:
-        if port.status == "open":
-            print(f"  Port {port.port_number} is open")
-
-    # TEST ARP Poisoning between first two hosts if available
-    if len(discovered_hosts) >= 2:
-        print(f"\nStarting test ARP poisoning: {discovered_hosts[1].ip_address} <-> {discovered_hosts[0].ip_address}")
-        arppoison = attacks.ArpPoisoning(discovered_hosts[1], discovered_hosts[0], iface)
-        arppoison.start()
-        time.sleep(5)
-        arppoison.stop()
+    if len(app.path) > 0 and app.path[-1]["ip"] != target_ip:
+        console.print(f"[warning]Target {target_ip} was not reached within {max_hops} hops.[/]")
+    else:
+        console.print(f"[success]Target {target_ip} reached in {len(app.path)} hops.[/]")
+        
+    console.print(Rule(style="border"))
+    console.print()
 
 class RichArgumentParser(argparse.ArgumentParser):
     def error(self, message):
@@ -349,13 +360,23 @@ def get_args():
     dos_p = subparses.add_parser(
         "DOS",
         help="Perform DoS attack",
-        formatter_class = RawTextRichHelpFormatter
+        formatter_class = RawTextRichHelpFormatter,
         aliases=["dos"]
     )
     
     #iface - flag
     dos_p.add_argument("-i", "--iface", help="Network interface (e.g. eth0).\n"
                             "ADVICE: Manual selection is highly recommended.")
+
+    # --- Trace Route ---
+    trace_p = subparses.add_parser(
+        "TRACE",
+        help="Perform a trace route to a target",
+        formatter_class=RawTextRichHelpFormatter,
+        aliases=["trace"]
+    )
+    trace_p.add_argument("target", help="Target IP address or domain")
+    trace_p.add_argument("-m", "--max-hops", type=int, default=30, help="Maximum number of hops (default: 30)")
 
     args = parser.parse_args()
 
@@ -398,8 +419,11 @@ def get_args():
             sys.exit(1)
         args.iface = resolve_iface(args.iface)
 
-    return args
+    # --- TRACE ---
+    elif args.command == "TRACE":
+        pass
 
+    return args
 
 def main():
     #first, check if admin
@@ -418,6 +442,8 @@ def main():
             run_host_scan(ip_range=args.target, iface=args.iface)
     elif args.command == "ARP":
         arp_spoof(target_ip=args.target, gateway_ip=args.gateway, iface=args.iface)
+    elif args.command == "TRACE":
+        trace_scan(target=args.target, max_hops=args.max_hops)
 
 if __name__ == "__main__":
     main()

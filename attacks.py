@@ -139,7 +139,7 @@ class ArpPoisoning:
 
 
 class DoS:
-    def __init__(self, iface):
+    def __init__(self, *, iface):
         self.__thread = None
         self.iface = iface
         self.is_running = False
