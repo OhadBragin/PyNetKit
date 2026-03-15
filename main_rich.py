@@ -6,10 +6,11 @@ from scapy.layers.l2 import getmacbyip
 import models
 import scanner
 import attacks
-from utils import is_valid_ip, is_valid_port, is_admin, get_target_mac
+from utils import is_valid_ip, is_valid_port, is_admin, get_mac_by_ip, get_gateway
 import time
 import argparse
 from rich_argparse import RawTextRichHelpFormatter
+
 
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -152,13 +153,20 @@ def run_host_scan(*, ip_range, iface, port_range=None):
     console.print(Rule(title="[info_bold]Scan complete.[/]", style="border"))
     console.print()
 
-def arp_spoof(*, target_ip, gateway_ip, iface, do_save=False):
+def arp_spoof(*, target_ip, iface, do_save=False, dns_domain=None, dns_ip=None):
     console.print()
     console.print(Rule(title="[info_bold]Starting ARP Spoofing Attack...[/]", style="border"))
     
+    # Auto-resolve gateway
+    gateway_ip = get_gateway(iface)
+    if not gateway_ip:
+        print_error_panel(f"Could not automatically resolve gateway for interface {iface}")
+        sys.exit(1)
+        
+    console.print(f"[muted]Resolved gateway IP: {gateway_ip}[/]")
     console.print("[muted]Resolving MAC addresses...[/]")
-    target_mac = get_target_mac(target_ip, iface)
-    gateway_mac = get_target_mac(gateway_ip, iface)
+    target_mac = get_mac_by_ip(target_ip, iface)
+    gateway_mac = get_mac_by_ip(gateway_ip, iface)
     
     if not target_mac:
         print_error_panel(f"Could not resolve MAC address for target {target_ip}")
@@ -174,6 +182,9 @@ def arp_spoof(*, target_ip, gateway_ip, iface, do_save=False):
         f"[highlight]Target:[/highlight]  [info]{target_ip}[/] [muted_light]->[/] {target_mac}",
         f"[highlight]Gateway:[/highlight] [info]{gateway_ip}[/] [muted_light]->[/] {gateway_mac}"
     ]
+
+    if dns_domain and dns_ip:
+        renderables.append(f"[highlight]DNS Spoof:[/highlight] [info]{dns_domain}[/] [muted_light]->[/] [success]{dns_ip}[/]")
     
     group = Group(*renderables)
     panel = Panel(
@@ -185,7 +196,14 @@ def arp_spoof(*, target_ip, gateway_ip, iface, do_save=False):
     )
     console.print(panel)
     
-    arp_poison = attacks.ArpPoisoning(target=target, gateway=gateway, iface=iface, do_save=do_save)
+    arp_poison = attacks.ArpPoisoning(
+        target=target, 
+        gateway=gateway, 
+        iface=iface, 
+        do_save=do_save,
+        original_domain=dns_domain,
+        spoofed_ip=dns_ip
+    )
     arp_poison.start()
     
     console.print("\n[success_bold]Attack is running![/] [muted]Traffic is being intercepted and forwarded.[/]")
@@ -206,10 +224,57 @@ def arp_spoof(*, target_ip, gateway_ip, iface, do_save=False):
         console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
         console.print()
 
-def run_dos(*, iface):
+def run_single_dos(*, target_ip, iface):
+    console.print()
+    console.print(Rule(title="[info_bold]Starting Single Target DoS Attack...[/]", style="border"))
+    
+    # Auto-resolve gateway
+    gateway_ip = get_gateway(iface)
+    if not gateway_ip:
+        print_error_panel(f"Could not automatically resolve gateway for interface {iface}")
+        sys.exit(1)
+        
+    console.print(f"[muted]Resolved gateway IP: {gateway_ip}[/]")
+    console.print("[muted]Resolving MAC addresses...[/]")
+    
+    target_mac = get_mac_by_ip(target_ip, iface)
+    if not target_mac:
+        print_error_panel(f"Could not resolve MAC address for target {target_ip}")
+        sys.exit(1)
+        
+    gateway_mac = get_mac_by_ip(gateway_ip, iface)
+    if not gateway_mac:
+        print_error_panel(f"Could not resolve MAC address for gateway {gateway_ip}. Aborting to ensure restoration safety.")
+        sys.exit(1)
+        
+    target = models.Host(ip_address=target_ip, mac_address=target_mac)
+    dos_attack = attacks.SingleTargetDos(
+        target=target, 
+        gateway_ip=gateway_ip, 
+        gateway_mac=gateway_mac,
+        iface=iface
+    )
+    
+    console.print(f"[highlight]Target:[/highlight] [info]{target_ip}[/] [muted_light]->[/] {target_mac}")
+    console.print(f"[highlight]Gateway:[/highlight] [info]{gateway_ip}[/] [muted_light]->[/] {gateway_mac}")
+    
+    dos_attack.start()
+    console.print("\n[success_bold]Attack is running![/] [muted]Poisoning target to disrupt connection.[/]")
+    
+    try:
+        console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
+    except KeyboardInterrupt:
+        console.print()
+    finally:
+        console.print("[warning]Stopping DoS attack and restoring target ARP table...[/]")
+        dos_attack.stop()
+        console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
+        console.print()
+
+def run_dhcp_dos(*, iface):
     console.print()
     console.print(Rule(title="[info_bold]Starting DHCP DoS Attack...[/]", style="border"))
-    dos_attack = attacks.DoS(iface=iface)
+    dos_attack = attacks.DHCPStarvation(iface=iface)
     dos_attack.start()
     console.print("\n[success_bold]Attack is running![/] [muted]Flooding network with DHCP Discover packets.[/]")
     
@@ -368,15 +433,18 @@ def get_args():
         formatter_class=RawTextRichHelpFormatter,
         aliases=["arp"]
     )
-    #target and gateway - positonal
+    #target - positonal
     arp_p.add_argument("target", help="Victim IP address")
-    arp_p.add_argument("gateway", help="Gateway(router) IP address")
 
     #iface - flag
     arp_p.add_argument("-i", "--iface", help="Network interface (e.g. eth0).\n"
                             "ADVICE: Manual selection is highly recommended.")
     #save - flag
     arp_p.add_argument("-s", "--save", action="store_true", help="Save intercepted packets to a pcap file")
+    
+    # DNS Spoofing arguments
+    arp_p.add_argument("--dns-domain", help="Domain name to spoof (e.g. google.com)")
+    arp_p.add_argument("--dns-ip", help="IP address to return for the spoofed domain")
 
     # --- Dos Attack ---
     dos_p = subparses.add_parser(
@@ -386,9 +454,16 @@ def get_args():
         aliases=["dos"]
     )
     
-    #iface - flag
-    dos_p.add_argument("-i", "--iface", help="Network interface (e.g. eth0).\n"
-                            "ADVICE: Manual selection is highly recommended.")
+    dos_subparsers = dos_p.add_subparsers(dest="dos_type", help="Type of DoS attack")
+    
+    # Single Target DoS
+    single_dos = dos_subparsers.add_parser("single", help="DoS a single target")
+    single_dos.add_argument("target", help="Target IP address")
+    single_dos.add_argument("-i", "--iface", help="Network interface")
+
+    # Network DoS (DHCP Starvation)
+    network_dos = dos_subparsers.add_parser("network", help="DoS the entire network (DHCP Starvation)")
+    network_dos.add_argument("-i", "--iface", help="Network interface")
 
     # --- Trace Route ---
     trace_p = subparses.add_parser(
@@ -436,14 +511,31 @@ def get_args():
         if not is_valid_ip(args.target):
             print_error_panel(f"Target '{args.target}' is not a valid IPv4 address.")
             sys.exit(1)
-        if not is_valid_ip(args.gateway):
-            print_error_panel(f"Gateway '{args.gateway}' is not a valid IPv4 address.")
-            sys.exit(1)
+        
+        # Validate DNS spoofing arguments
+        if args.dns_domain or args.dns_ip:
+            if not (args.dns_domain and args.dns_ip):
+                print_error_panel("Both --dns-domain and --dns-ip must be provided for DNS spoofing.")
+                sys.exit(1)
+            if not is_valid_ip(args.dns_ip):
+                print_error_panel(f"DNS spoof IP '{args.dns_ip}' is not a valid IPv4 address.")
+                sys.exit(1)
+        
         args.iface = resolve_iface(args.iface)
 
     # --- DOS ---
     elif args.command == "DOS":
-        args.iface = resolve_iface(args.iface)
+        if not args.dos_type:
+            print_error_panel("Please specify a DoS type: 'single' or 'network'.")
+            sys.exit(1)
+        
+        if args.dos_type == "single":
+            if not is_valid_ip(args.target):
+                print_error_panel(f"Target '{args.target}' is not a valid IPv4 address.")
+                sys.exit(1)
+            args.iface = resolve_iface(args.iface)
+        elif args.dos_type == "network":
+            args.iface = resolve_iface(args.iface)
 
     # --- TRACE ---
     elif args.command == "TRACE":
@@ -468,9 +560,18 @@ def main():
         else:
             run_host_scan(ip_range=args.target, iface=args.iface)
     elif args.command == "ARP":
-        arp_spoof(target_ip=args.target, gateway_ip=args.gateway, iface=args.iface, do_save=args.save)
+        arp_spoof(
+            target_ip=args.target, 
+            iface=args.iface, 
+            do_save=args.save,
+            dns_domain=args.dns_domain,
+            dns_ip=args.dns_ip
+        )
     elif args.command == "DOS":
-        run_dos(iface=args.iface)
+        if args.dos_type == "single":
+            run_single_dos(target_ip=args.target, iface=args.iface)
+        elif args.dos_type == "network":
+            run_dhcp_dos(iface=args.iface)
     elif args.command == "TRACE":
         trace_scan(target=args.target, max_hops=args.max_hops)
 

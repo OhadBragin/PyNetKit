@@ -1,5 +1,4 @@
 from scapy.all import *
-from scapy.layers.dns import DNS, DNSQR
 from scapy.layers.inet import IP, TCP, UDP
 from scapy.layers.l2 import ARP, Ether
 import logging
@@ -9,6 +8,7 @@ logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 
 import models
 from utils import broad_os_map
+
 class NetworkScanner:
     def __init__(self, *, ip_range, port_range=None, iface):
         self.ip_range = ip_range
@@ -18,25 +18,22 @@ class NetworkScanner:
 
     def discover_hosts(self):
         """
-        Uses ARP request to discover active hosts in the specified IP range
-        and updates the hosts list with <models.Host> objects representing
-        the discovered hosts
+        Discovers hosts in the specified IP range using ARP requests.
+        Only works for local networks.
         :return: None
         """
-        pkts = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=self.ip_range)
-        ans, unans = srp(pkts, timeout=1, iface=self.iface, verbose=False)
-        for snd, rcv in ans:
+        pkts_arp = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=self.ip_range)
+        ans_arp, _ = srp(pkts_arp, timeout=1, iface=self.iface, verbose=False)
+        for _, rcv in ans_arp:
             host = models.Host(ip_address=rcv[ARP].psrc, mac_address=rcv[ARP].hwsrc)
             self.hosts.append(host)
-
 
     def scan_ports(self, host_obj):
         """
         Scans the specified host for open ports in the specified
         port range using TCP SYN scan, and tries to guess
         the OS using ttl. It then updates the host's ports
-        list with <models.Port> objects, representing the
-        open ports and their services
+        list with <models.Port> objects.
         :param host_obj:
         :return: None
         """
@@ -49,40 +46,49 @@ class NetworkScanner:
             8080: "http-proxy", 8443: "https-alt"
         }
 
-        pkts = Ether(dst=host_obj.mac_address) / IP(dst=host_obj.ip_address) / TCP(dport=self.port_range, flags="S")
-        ans, unans = srp(pkts, timeout=1, iface=self.iface, verbose=False)
-        for snd, rsp in ans:
+        # TCP Scan (Layer 2 - since we know the MAC)
+        pkts_tcp = Ether(dst=host_obj.mac_address) / IP(dst=host_obj.ip_address) / TCP(dport=self.port_range, flags="S")
+        ans_tcp, _ = srp(pkts_tcp, timeout=1, iface=self.iface, verbose=False)
+        for snd, rsp in ans_tcp:
             if rsp.haslayer(TCP):
                 port_num = rsp[TCP].sport
                 service = known_ports.get(port_num, "unknown")
-                if rsp[TCP].flags == "SA": #SYN-ACK - port open
+                if rsp[TCP].flags == "SA": # SYN-ACK
                     port = models.Port(port_number=port_num, status="open", service=service)
                     host_obj.add_port(port)
                     host_obj.os = broad_os_map(rsp[IP].ttl)
-                elif rsp[TCP].flags == "RA": #RST-ACK - port closed
+                elif rsp[TCP].flags == "RA": # RST-ACK
                     port = models.Port(port_number=port_num, status="closed", service=service)
                     host_obj.add_port(port)
                     host_obj.os = broad_os_map(rsp[IP].ttl)
-            else: #No TCP layer - could be filtered or no response
+            else:
                 port_num = snd[TCP].dport
                 service = known_ports.get(port_num, "unknown")
                 port = models.Port(port_number=port_num, status="filtered", service=service)
                 host_obj.add_port(port)
-        #UDP
-        pkts = Ether(dst=host_obj.mac_address) / IP(dst=host_obj.ip_address) / UDP(dport=self.port_range)
-        ans, unans = srp(pkts, timeout=1, iface=self.iface, verbose=False)
-        for snd, rsp in ans:
-            if rsp is None: #open or filtered
-                port_num = snd[UDP].dport
-                service = known_ports.get(port_num, "unknown")
-                port = models.Port(port_number=port_num, status="open/filtered", service=service)
-                host_obj.add_port(port)
-            elif rsp.haslayer(UDP): #is open
+
+        # UDP Scan (Layer 2)
+        pkts_udp = Ether(dst=host_obj.mac_address) / IP(dst=host_obj.ip_address) / UDP(dport=self.port_range)
+        ans_udp, unans_udp = srp(pkts_udp, timeout=1, iface=self.iface, verbose=False)
+        
+        for snd, rsp in ans_udp:
+            if rsp.haslayer(UDP):
                 port_num = rsp[UDP].sport
                 service = known_ports.get(port_num, "unknown")
                 port = models.Port(port_number=port_num, status="open", service=service)
                 host_obj.add_port(port)
-                host_obj.os = broad_os_map(rsp[IP].ttl)
+            elif rsp.haslayer(ICMP):
+                port_num = snd[UDP].dport
+                service = known_ports.get(port_num, "unknown")
+                port = models.Port(port_number=port_num, status="closed", service=service)
+                host_obj.add_port(port)
+
+        for snd in unans_udp:
+            port_num = snd[UDP].dport
+            service = known_ports.get(port_num, "unknown")
+            port = models.Port(port_number=port_num, status="open|filtered", service=service)
+            host_obj.add_port(port)
+
 class TraceScanner:
     def __init__(self, *,  target_ip, max_hops):
         self.target_ip = target_ip
@@ -126,9 +132,6 @@ class TraceScanner:
             else:
                 self.path.append({"hop": ttl, "ip": ans.src, "time": f"{rtt} ms"})
                 if ans.src == self.target_ip:
-                    self.is_running = False
                     break
     def start(self):
         self.run_trace()
-
-
