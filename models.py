@@ -1,6 +1,7 @@
 class Port:
-    def __init__(self, port_number, status, service=None):
+    def __init__(self, port_number, status, service=None, proto=None):
         self.port_number = port_number
+        self.proto = proto
         self.status = status
         self.service = service
 

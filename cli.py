@@ -117,7 +117,9 @@ def run_host_scan(*, ip_range, iface, port_range=None):
     for host in app.hosts:
         renderables = []
         if port_range:
-            app.scan_ports(host)
+            with console.status(f"[muted]Scanning ports for {host.ip_address}...[/]"):
+                app.scan_ports(host)
+            
             if host.os:
                 renderables.append(f"[highlight]OS:[/highlight] [muted_light]{host.os}[/]")
             else:
@@ -132,7 +134,13 @@ def run_host_scan(*, ip_range, iface, port_range=None):
                 
                 for p in open_ports:
                     service = p.service if p.service else "unknown"
-                    table.add_row(f"{str(p.port_number)}/tcp", "🟢 [success_bold]open[/]", service)
+                    state = "🟢 [success_bold]open[/]"
+                    
+                    port_display = str(p.port_number)
+                    if p.proto:
+                        port_display += f"/{p.proto}"
+                        
+                    table.add_row(port_display, state, service)
                 renderables.append(table)
             else:
                 renderables.append("[muted]⚪ No open ports found.[/]")
@@ -164,9 +172,10 @@ def arp_spoof(*, target_ip, iface, do_save=False, dns_domain=None, dns_ip=None):
         sys.exit(1)
         
     console.print(f"[muted]Resolved gateway IP: {gateway_ip}[/]")
-    console.print("[muted]Resolving MAC addresses...[/]")
-    target_mac = get_mac_by_ip(target_ip, iface)
-    gateway_mac = get_mac_by_ip(gateway_ip, iface)
+    
+    with console.status("[muted]Resolving MAC addresses...[/]"):
+        target_mac = get_mac_by_ip(target_ip, iface)
+        gateway_mac = get_mac_by_ip(gateway_ip, iface)
     
     if not target_mac:
         print_error_panel(f"Could not resolve MAC address for target {target_ip}")
@@ -204,25 +213,24 @@ def arp_spoof(*, target_ip, iface, do_save=False, dns_domain=None, dns_ip=None):
         original_domain=dns_domain,
         spoofed_ip=dns_ip
     )
-    arp_poison.start()
+    with console.status("\n[success_bold]Attack is running![/] [muted]Traffic is being intercepted and forwarded.[/]"):
+        try:
+            if do_save:
+                console.print(f"[success]Saving packets to:[/] [info_bold]{arp_poison.pcap_filename}[/]")
+            
+            ws_filter = f"ip.addr == {target_ip}"
+            console.print(f"[info]💡 Tip:[/] [muted_light]Open Wireshark on [info_bold]{iface}[/] and use this filter to see the target's traffic:[/]")
+            console.print(f"       [highlight]{ws_filter}[/]")
+            
+            console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
+        except KeyboardInterrupt:
+            console.print()
     
-    console.print("\n[success_bold]Attack is running![/] [muted]Traffic is being intercepted and forwarded.[/]")
-    if do_save:
-        console.print(f"[success]Saving packets to:[/] [info_bold]{arp_poison.pcap_filename}[/]")
-    
-    ws_filter = f"ip.addr == {target_ip}"
-    console.print(f"[info]💡 Tip:[/] [muted_light]Open Wireshark on [info_bold]{iface}[/] and use this filter to see the target's traffic:[/]")
-    console.print(f"       [highlight]{ws_filter}[/]")
-    
-    try:
-        console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
-    except KeyboardInterrupt:
-        console.print()
-    finally:
-        console.print("[warning]Stopping attack and restoring ARP tables...[/]")
+    with console.status("[warning]Stopping attack and restoring ARP tables...[/]"):
         arp_poison.stop()
-        console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
-        console.print()
+        
+    console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
+    console.print()
 
 def run_single_dos(*, target_ip, iface):
     console.print()
@@ -235,22 +243,23 @@ def run_single_dos(*, target_ip, iface):
         sys.exit(1)
         
     console.print(f"[muted]Resolved gateway IP: {gateway_ip}[/]")
-    console.print("[muted]Resolving MAC addresses...[/]")
     
-    target_mac = get_mac_by_ip(target_ip, iface)
+    with console.status("[muted]Resolving MAC addresses...[/]"):
+        target_mac = get_mac_by_ip(target_ip, iface)
+        gateway_mac = get_mac_by_ip(gateway_ip, iface)
+    
     if not target_mac:
         print_error_panel(f"Could not resolve MAC address for target {target_ip}")
         sys.exit(1)
         
-    gateway_mac = get_mac_by_ip(gateway_ip, iface)
     if not gateway_mac:
         print_error_panel(f"Could not resolve MAC address for gateway {gateway_ip}. Aborting to ensure restoration safety.")
         sys.exit(1)
         
     # --- ARP SHIELD START ---
     # set a static ARP entry for our gateway so our machine ignores the spoofed packets
-    console.print(f"[muted]Shielding local ARP cache for gateway [info]{gateway_ip}[/]...[/]")
-    set_static_arp(iface, gateway_ip, gateway_mac)
+    with console.status(f"[muted]Shielding local ARP cache for gateway [info]{gateway_ip}[/]...[/]"):
+        set_static_arp(iface, gateway_ip, gateway_mac)
     
     try:
         target = models.Host(ip_address=target_ip, mac_address=target_mac)
@@ -265,19 +274,19 @@ def run_single_dos(*, target_ip, iface):
         console.print(f"[highlight]Gateway:[/highlight] [info]{gateway_ip}[/] [muted_light]->[/] {gateway_mac}")
         
         dos_attack.start()
-        console.print("\n[success_bold]Attack is running![/] [muted]Target is totally blacked out (Inbound & Outbound).[/]")
         
-        console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
+        with console.status("\n[success_bold]Attack is running![/] [muted]Target is totally blacked out (Inbound & Outbound).[/]"):
+            console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
     except KeyboardInterrupt:
         console.print()
     finally:
         # --- ARP SHIELD END ---
-        console.print("[warning]Stopping DoS attack and restoring network tables...[/]")
-        if 'dos_attack' in locals():
-            dos_attack.stop()
-            
-        console.print(f"[muted]Reverting local gateway ARP to dynamic...[/]")
-        remove_static_arp(iface, gateway_ip)
+        with console.status("[warning]Stopping DoS attack and restoring network tables...[/]"):
+            if 'dos_attack' in locals():
+                dos_attack.stop()
+                
+            console.print(f"[muted]Reverting local gateway ARP to dynamic...[/]")
+            remove_static_arp(iface, gateway_ip)
         
         console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
         console.print()
@@ -287,17 +296,18 @@ def run_dhcp_dos(*, iface):
     console.print(Rule(title="[info_bold]Starting DHCP DoS Attack...[/]", style="border"))
     dos_attack = attacks.DHCPStarvation(iface=iface)
     dos_attack.start()
-    console.print("\n[success_bold]Attack is running![/] [muted]Flooding network with DHCP Discover packets.[/]")
     
-    try:
-        console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
-    except KeyboardInterrupt:
-        console.print()
-    finally:
-        console.print("[warning]Stopping DoS attack...[/]")
+    with console.status("\n[success_bold]Attack is running![/] [muted]Flooding network with DHCP Discover packets.[/]"):
+        try:
+            console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
+        except KeyboardInterrupt:
+            console.print()
+    
+    with console.status("[warning]Stopping DoS attack...[/]"):
         dos_attack.stop()
-        console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
-        console.print()
+        
+    console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
+    console.print()
 
 def trace_scan(*, target, max_hops=30):
     target_ip = target
@@ -563,17 +573,8 @@ def get_args():
     return args
 
 def main():
-    #first, check if admin
-    if not is_admin():
-        print_error_panel("This script requires administrator/root privileges to run.")
-        sys.exit(1)
     args = get_args()
-    if args.gui:
-        import gui
-        print("Starting GUI...")
-        app = gui.NetworkMapperGUI()
-        app.mainloop()
-    elif args.command == "SCAN":
+    if args.command == "SCAN":
         if args.port:
             run_host_scan(ip_range=args.target, iface=args.iface, port_range=args.range)
         else:

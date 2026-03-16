@@ -54,17 +54,17 @@ class NetworkScanner:
                 port_num = rsp[TCP].sport
                 service = known_ports.get(port_num, "unknown")
                 if rsp[TCP].flags == "SA": # SYN-ACK
-                    port = models.Port(port_number=port_num, status="open", service=service)
+                    port = models.Port(port_number=port_num, status="open", service=service, proto="tcp")
                     host_obj.add_port(port)
                     host_obj.os = broad_os_map(rsp[IP].ttl)
                 elif rsp[TCP].flags == "RA": # RST-ACK
-                    port = models.Port(port_number=port_num, status="closed", service=service)
+                    port = models.Port(port_number=port_num, status="closed", service=service, proto="tcp")
                     host_obj.add_port(port)
                     host_obj.os = broad_os_map(rsp[IP].ttl)
             else:
                 port_num = snd[TCP].dport
                 service = known_ports.get(port_num, "unknown")
-                port = models.Port(port_number=port_num, status="filtered", service=service)
+                port = models.Port(port_number=port_num, status="filtered", service=service, proto="tcp")
                 host_obj.add_port(port)
 
         # UDP Scan (Layer 2)
@@ -75,18 +75,18 @@ class NetworkScanner:
             if rsp.haslayer(UDP):
                 port_num = rsp[UDP].sport
                 service = known_ports.get(port_num, "unknown")
-                port = models.Port(port_number=port_num, status="open", service=service)
+                port = models.Port(port_number=port_num, status="open", service=service, proto="udp")
                 host_obj.add_port(port)
             elif rsp.haslayer(ICMP):
                 port_num = snd[UDP].dport
                 service = known_ports.get(port_num, "unknown")
-                port = models.Port(port_number=port_num, status="closed", service=service)
+                port = models.Port(port_number=port_num, status="closed", service=service, proto="udp")
                 host_obj.add_port(port)
 
         for snd in unans_udp:
             port_num = snd[UDP].dport
             service = known_ports.get(port_num, "unknown")
-            port = models.Port(port_number=port_num, status="open|filtered", service=service)
+            port = models.Port(port_number=port_num, status="open|filtered", service=service, proto="udp")
             host_obj.add_port(port)
 
 class TraceScanner:
