@@ -5,6 +5,8 @@ import subprocess
 import re
 import platform
 from scapy.all import Ether, ARP, srp1, conf
+import time
+
 
 def get_mac_by_ip(target_ip, iface, retries=3):
     """
@@ -31,7 +33,6 @@ def get_mac_by_ip(target_ip, iface, retries=3):
             pass
             
     return None
-
 
 def get_gateway(normalized_iface=None):
     """
@@ -98,7 +99,6 @@ def broad_os_map(ttl):
     else:
         return "Unknown/Spoofed"
 
-
 def is_valid_ip(ip):
     try:
         # interface handles both individual addresses and CIDR networks
@@ -108,7 +108,6 @@ def is_valid_ip(ip):
         return True
     except ValueError:
         return False
-
 
 def is_valid_port(port_str):
     try:

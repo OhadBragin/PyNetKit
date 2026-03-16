@@ -131,7 +131,7 @@ class TraceScanner:
                 continue
             else:
                 self.path.append({"hop": ttl, "ip": ans.src, "time": f"{rtt} ms"})
-                if ans.src == self.target_ip:
+                if ans.src == self.target_ip or (ans.haslayer(ICMP) and ans[ICMP].type == 0):
                     break
     def start(self):
         self.run_trace()

@@ -6,7 +6,7 @@ from scapy.layers.l2 import getmacbyip
 import models
 import scanner
 import attacks
-from utils import is_valid_ip, is_valid_port, is_admin, get_mac_by_ip, get_gateway
+from utils import is_valid_ip, is_valid_port, is_admin, get_mac_by_ip, get_gateway, set_static_arp, remove_static_arp
 import time
 import argparse
 from rich_argparse import RawTextRichHelpFormatter
@@ -157,7 +157,7 @@ def arp_spoof(*, target_ip, iface, do_save=False, dns_domain=None, dns_ip=None):
     console.print()
     console.print(Rule(title="[info_bold]Starting ARP Spoofing Attack...[/]", style="border"))
     
-    # Auto-resolve gateway
+    # resolve gateway
     gateway_ip = get_gateway(iface)
     if not gateway_ip:
         print_error_panel(f"Could not automatically resolve gateway for interface {iface}")
@@ -225,12 +225,10 @@ def arp_spoof(*, target_ip, iface, do_save=False, dns_domain=None, dns_ip=None):
         console.print()
 
 def run_single_dos(*, target_ip, iface):
-    from utils import set_static_arp, remove_static_arp
-    
     console.print()
     console.print(Rule(title="[info_bold]Starting Single Target DoS Attack...[/]", style="border"))
     
-    # Auto-resolve gateway
+    # resolve gateway
     gateway_ip = get_gateway(iface)
     if not gateway_ip:
         print_error_panel(f"Could not automatically resolve gateway for interface {iface}")
@@ -250,7 +248,7 @@ def run_single_dos(*, target_ip, iface):
         sys.exit(1)
         
     # --- ARP SHIELD START ---
-    # Set a static ARP entry for our gateway so our machine ignores the spoofed packets
+    # set a static ARP entry for our gateway so our machine ignores the spoofed packets
     console.print(f"[muted]Shielding local ARP cache for gateway [info]{gateway_ip}[/]...[/]")
     set_static_arp(iface, gateway_ip, gateway_mac)
     
@@ -388,27 +386,35 @@ class RichArgumentParser(argparse.ArgumentParser):
 
 def get_args():
     """
-    Parses and validates command-line arguments using argparse.
-    
-    Accessing the arguments from the returned object:
+    parses and validates command-line args.
+
+    accessing the args from the returned object:
     - args.gui: (bool) True if graphical mode is requested (-g/--gui).
-    - args.command: (str) The selected subcommand ('scan' or 'ARP').
-    
-    If args.command == 'scan':
-    - args.target: (str) The target IPv4 address or CIDR range.
-    - args.iface: (str) The network interface to use.
-    - args.port: (bool) True if port scanning is enabled (-p/--port).
-    - args.range: (int | list) The port(s) to scan. Will be an int for a single port, or a list of ints for a range.
-    
+    - args.command: (str) The selected normalized subcommand ('SCAN', 'ARP', 'DOS', or 'TRACE').
+
+    If args.command == 'SCAN':
+        - args.target: (str) The target IPv4 address or CIDR range.
+        - args.iface: (str) The resolved network interface name.
+        - args.port: (bool) True if port scanning is enabled.
+        - args.range: (int | list) Single port or list of ports (derived from e.g., '1-1024').
+
     If args.command == 'ARP':
-    - args.target: (str) The victim IP address.
-    - args.gateway: (str) The gateway (router) IP address.
-    - args.iface: (str) The network interface to use.
+        - args.target: (str) The victim IP address.
+        - args.iface: (str) The resolved network interface name.
+        - args.save: (bool) True if intercepted packets should be saved to pcap.
+        - args.dns_domain: (str | None) Domain name to spoof.
+        - args.dns_ip: (str | None) IP address to return for the spoofed domain.
 
     If args.command == 'DOS':
-    - args.iface (str) The network interface to use
-    
-    :return: argparse.Namespace object containing the parsed arguments.
+        - args.dos_type: (str) Sub-command 'single' or 'network'.
+        - args.target: (str) Target IP (only if dos_type is 'single').
+        - args.iface: (str) The resolved network interface name.
+
+    If args.command == 'TRACE':
+        - args.target: (str) Target IP address or domain name.
+        - args.max_hops: (int) Maximum number of hops for the traceroute.
+
+    :return: argparse.Namespace object containing the parsed and validated arguments.
     """
     parser = RichArgumentParser(
         description="Network Mapper Tool",
@@ -422,7 +428,7 @@ def get_args():
 
     subparses = parser.add_subparsers(dest="command", help='commands')
 
-    # --- Host Scanning(discovery) ---
+    # --- Host scanning ---
     scan_parser = subparses.add_parser(
         "scan", 
         help="Scan for live hosts",
@@ -439,7 +445,7 @@ def get_args():
     #port range
     scan_parser.add_argument("-r", "--range", default="1-1024", type=str,  help="Port range to scan. Can be a single port or a range.\ne.g 8 or 1-1024")
 
-    # --- Arp Spoofing ---
+    # --- ARP spoofing ---
     arp_p = subparses.add_parser(
         "ARP", 
         help="Perform ARP poisoning",
@@ -455,11 +461,11 @@ def get_args():
     #save - flag
     arp_p.add_argument("-s", "--save", action="store_true", help="Save intercepted packets to a pcap file")
     
-    # DNS Spoofing arguments
+    # DNS Spoofing args
     arp_p.add_argument("--dns-domain", help="Domain name to spoof (e.g. google.com)")
     arp_p.add_argument("--dns-ip", help="IP address to return for the spoofed domain")
 
-    # --- Dos Attack ---
+    # --- DoS attack ---
     dos_p = subparses.add_parser(
         "DOS",
         help="Perform DoS attack",
@@ -469,12 +475,12 @@ def get_args():
     
     dos_subparsers = dos_p.add_subparsers(dest="dos_type", help="Type of DoS attack")
     
-    # Single Target DoS
+    # single target DoS
     single_dos = dos_subparsers.add_parser("single", help="DoS a single target")
     single_dos.add_argument("target", help="Target IP address")
     single_dos.add_argument("-i", "--iface", help="Network interface")
 
-    # Network DoS (DHCP Starvation)
+    # network DoS (DHCP starvation)
     network_dos = dos_subparsers.add_parser("network", help="DoS the entire network (DHCP Starvation)")
     network_dos.add_argument("-i", "--iface", help="Network interface")
 
@@ -500,7 +506,7 @@ def get_args():
 
     args.command = args.command.upper() # normalize
 
-    # --- scan ---
+    # --- SCAN ---
     if args.command == "SCAN":
         if args.port:
             if not is_valid_port(args.range):
@@ -525,7 +531,7 @@ def get_args():
             print_error_panel(f"Target '{args.target}' is not a valid IPv4 address.")
             sys.exit(1)
         
-        # Validate DNS spoofing arguments
+        # validate DNS spoofing arguments
         if args.dns_domain or args.dns_ip:
             if not (args.dns_domain and args.dns_ip):
                 print_error_panel("Both --dns-domain and --dns-ip must be provided for DNS spoofing.")

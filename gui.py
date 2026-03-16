@@ -1,314 +1,694 @@
-import tkinter as tk
-from tkinter import messagebox, scrolledtext, ttk
+import ttkbootstrap as tb
+from ttkbootstrap.constants import *
+from tkinter import messagebox
 import threading
-from scapy.all import conf, get_if_list
-import scanner
-import attacks
-from utils import is_valid_ip, is_valid_port
+from scapy.interfaces import get_working_ifaces
+
+from scanner import NetworkScanner, TraceScanner
+from attacks import ArpPoisoning, DHCPStarvation, SingleTargetDos
+from utils import get_gateway, get_mac_by_ip, is_valid_ip
 import models
-import ipaddress
 
-
-class HostDetailWindow(tk.Toplevel):
-    """
-    A Toplevel window that displays detailed information about a Host,
-    allows port scanning, and allows initiating attacks like ARP spoofing.
-    """
-
-    def __init__(self, master, host, scanner_obj, iface):
-        """
-        Initializes the detail window for a specific host.
-        :param master: The parent window.
-        :param host: The Host object to display.
-        :param scanner_obj: The NetworkScanner instance to use for scanning.
-        :param iface: The network interface to use.
-        """
-        super().__init__(master)
-        self.title(f"Host Details: {host.ip_address}")
-        self.geometry("450x650")
-        self.host = host
-        self.scanner = scanner_obj
-        self.iface = iface
-        self.arp_poisoner = None
-        self._create_widgets()
-
-    def _create_widgets(self):
-        """
-        Creates and arranges the widgets in the detail window.
-        :return: None
-        """
-        # Host Information Section
-        info_frame = tk.LabelFrame(self, text="Host Information", padx=10, pady=10)
-        info_frame.pack(fill="x", padx=10, pady=10)
-
-        tk.Label(info_frame, text=f"IP Address: {self.host.ip_address}", font=("Arial", 10, "bold")).pack(anchor="w")
-        tk.Label(info_frame, text=f"MAC Address: {self.host.mac_address}").pack(anchor="w")
-        self.os_label = tk.Label(info_frame, text=f"Operating System: {self.host.os or 'Unknown'}")
-        self.os_label.pack(anchor="w")
-
-        # Port Scan Section
-        port_scan_frame = tk.LabelFrame(self, text="Port Scan Configuration", padx=10, pady=10)
-        port_scan_frame.pack(fill="x", padx=10, pady=5)
-
-        tk.Label(port_scan_frame, text="Port Range (e.g. 1-1024):").pack(side=tk.LEFT)
-        self.port_entry = tk.Entry(port_scan_frame, width=15)
-        self.port_entry.insert(0, "1-1024")
-        self.port_entry.pack(side=tk.LEFT, padx=5)
-
-        self.scan_ports_btn = tk.Button(port_scan_frame, text="Scan Ports", command=self._start_port_scan)
-        self.scan_ports_btn.pack(side=tk.RIGHT)
-
-        # Open Ports Section
-        ports_frame = tk.LabelFrame(self, text="Scan Results", padx=10, pady=10)
-        ports_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.ports_list = scrolledtext.ScrolledText(ports_frame, height=10)
-        self.ports_list.pack(fill="both", expand=True)
-        self._refresh_ports_display()
-
-        # Attacks Section
-        attacks_frame = tk.LabelFrame(self, text="Initiate Attacks", padx=10, pady=10)
-        attacks_frame.pack(fill="x", padx=10, pady=10)
-
-        # Gateway Selection for ARP Spoof
-        tk.Label(attacks_frame, text="Gateway IP:").pack(side=tk.LEFT)
-        self.gateway_entry = tk.Entry(attacks_frame)
-        # Suggest the first host as gateway by default
-        if self.master.hosts:
-             self.gateway_entry.insert(0, self.master.hosts[0].ip_address)
-        self.gateway_entry.pack(side=tk.LEFT, padx=5)
-
-        self.arp_btn = tk.Button(attacks_frame, text="Start ARP Spoof", command=self._toggle_arp_spoof)
-        self.arp_btn.pack(side=tk.RIGHT, padx=5)
-
-    def _refresh_ports_display(self):
-        """
-        Updates the scrolled text widget with the host's current open ports.
-        :return: None
-        """
-        self.ports_list.config(state=tk.NORMAL)
-        self.ports_list.delete(1.0, tk.END)
-        open_ports = [p for p in self.host.ports if p.status == "open"]
-        if open_ports:
-            for p in open_ports:
-                self.ports_list.insert(tk.END, f"Port {p.port_number}: {p.status}\n")
-        else:
-            self.ports_list.insert(tk.END, "No open ports found or scan not performed.\n")
-        self.ports_list.config(state=tk.DISABLED)
-        self.os_label.config(text=f"Operating System: {self.host.os or 'Unknown'}")
-
-    def _start_port_scan(self):
-        """
-        Initiates a port scan in a background thread.
-        :return: None
-        """
-        port_input = self.port_entry.get().strip()
-        if not is_valid_port(port_input):
-            messagebox.showerror("Error", "Invalid Port range format. Please read help(-h)")
-            return
-
-        port_str = port_input.split('-')
-        if len(port_str) == 2:
-            port_range = (int(port_str[0]), int(port_str[1]))
-        else:
-            port_range = (int(port_str[0]), int(port_str[0]))
-
-        self.scan_ports_btn.config(state=tk.DISABLED, text="Scanning...")
-        self.scanner.port_range = port_range
-        
-        thread = threading.Thread(target=self._run_port_scan)
-        thread.daemon = True
-        thread.start()
-
-    def _run_port_scan(self):
-        """
-        Runs the port scan logic and updates the UI.
-        :return: None
-        """
-        try:
-            # Clear old ports
-            self.host.ports = []
-            self.scanner.scan_ports(self.host, self.iface)
-            self.after(0, self._on_port_scan_complete)
-        except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Port Scan Error", str(e)))
-            self.after(0, self._on_port_scan_complete)
-
-    def _on_port_scan_complete(self):
-        """
-        Callback when port scan finishes.
-        :return: None
-        """
-        self.scan_ports_btn.config(state=tk.NORMAL, text="Scan Ports")
-        self._refresh_ports_display()
-
-    def _toggle_arp_spoof(self):
-        """
-        Starts or stops the ARP spoofing attack.
-        :return: None
-        """
-        if self.arp_poisoner and self.arp_poisoner.is_running:
-            self._stop_arp_spoof()
-        else:
-            self._start_arp_spoof()
-
-    def _start_arp_spoof(self):
-        """
-        Configures and starts the ArpPoisoning attack.
-        :return: None
-        """
-        gateway_ip = self.gateway_entry.get().strip()
-        if not gateway_ip:
-            messagebox.showerror("Error", "Please specify a gateway IP.")
-            return
-
-        found_gw = next((h for h in self.master.hosts if h.ip_address == gateway_ip), None)
-        if not found_gw:
-            messagebox.showerror("Error", "Gateway MAC address not known. Ensure the gateway was in the scan range.")
-            return
-
-        self.arp_poisoner = attacks.ArpPoisoning(self.host, found_gw, self.iface)
-        try:
-            self.arp_poisoner.start()
-            self.arp_btn.config(text="Stop ARP Spoof", fg="red")
-            messagebox.showinfo("Success", f"Started ARP poisoning.")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed: {str(e)}")
-
-    def _stop_arp_spoof(self):
-        """
-        Stops the attack and restores tables.
-        :return: None
-        """
-        if self.arp_poisoner:
-            self.arp_poisoner.stop()
-            self.arp_btn.config(text="Start ARP Spoof", fg="black")
-            messagebox.showinfo("Stopped", "ARP tables restored.")
-
-
-class NetworkMapperGUI(tk.Tk):
-    """
-    Main GUI application class.
-    """
-
+class NetworkMapperGUI(tb.Window):
     def __init__(self):
-        """
-        Initializes the application window.
-        """
-        super().__init__()
-        self.title("Network Mapper v1.1")
-        self.geometry("800x600")
-        self.hosts = []
-        self.scanner = None
-        self._create_widgets()
-
-    def _create_widgets(self):
-        """
-        Creates the main window layout.
-        :return: None
-        """
-        tk.Label(self, text="Network Mapper - Host Discovery", font=("Arial", 16, "bold"), pady=10).pack()
-
-        input_frame = tk.LabelFrame(self, text="Scan Configuration", padx=10, pady=10)
-        input_frame.pack(fill="x", padx=20, pady=10)
-
-        tk.Label(input_frame, text="IP Range:").grid(row=0, column=0, sticky="w")
-        self.ip_entry = tk.Entry(input_frame, width=30)
+        super().__init__(themename="darkly") # Clean, professional dark mode
+        self.title("PyNetKit")
+        self.geometry("1000x800") # More responsive default size
+        
+        self.interfaces = {}
+        self.populate_interfaces()
+        
+        self.active_host = None # Keep track of selected host
+        
+        # Global attacks variables
+        self.arp_attack = None
+        self.st_dos_attack = None
+        self.dhcp_attack = None
+        
+        self.setup_ui()
+        
+        # Dynamically set the minimum size so buttons never get cut off
+        self.update_idletasks()
+        self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
+        
+    def populate_interfaces(self):
+        for iface in get_working_ifaces():
+            friendly_name = iface.description if iface.description else iface.name
+            if friendly_name in self.interfaces:
+                friendly_name = f"{friendly_name} ({iface.name})"
+            self.interfaces[friendly_name] = iface.name
+            
+    def setup_ui(self):
+        # Create a PanedWindow to split top and bottom halves
+        self.paned_window = tb.Panedwindow(self, orient=VERTICAL)
+        self.paned_window.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        
+        # --- TOP HALF: Master View (Discovery & List) ---
+        self.top_frame = tb.Frame(self.paned_window)
+        self.paned_window.add(self.top_frame, weight=1) # Top gets 1 part height
+        
+        self.setup_master_view()
+        
+        # --- BOTTOM HALF: Detail View (Notebook for active host) ---
+        self.bottom_frame = tb.Frame(self.paned_window)
+        self.paned_window.add(self.bottom_frame, weight=2) # Bottom gets 2 parts height
+        
+        # The actual notebook (Always packed to prevent UI jumps)
+        self.detail_notebook = tb.Notebook(self.bottom_frame)
+        self.detail_notebook.pack(fill=BOTH, expand=True)
+        
+        self.summary_tab = tb.Frame(self.detail_notebook, padding="15")
+        self.detail_notebook.add(self.summary_tab, text="Summary")
+        self.no_host_label = tb.Label(self.summary_tab, text="Select a host from the table above to view details and launch attacks.", font=("Helvetica", 14), foreground="gray", justify=CENTER)
+        self.no_host_label.pack(expand=True)
+        
+        self.ports_tab = tb.Frame(self.detail_notebook, padding="15")
+        self.detail_notebook.add(self.ports_tab, text="Port Scanner", state="disabled")
+        
+        self.arp_tab = tb.Frame(self.detail_notebook, padding="15")
+        self.detail_notebook.add(self.arp_tab, text="ARP Poisoning", state="disabled")
+        
+        self.dos_tab = tb.Frame(self.detail_notebook, padding="15")
+        self.detail_notebook.add(self.dos_tab, text="Denial of Service", state="disabled")
+        
+        self.trace_tab = tb.Frame(self.detail_notebook, padding="15")
+        self.detail_notebook.add(self.trace_tab, text="Traceroute", state="disabled")
+        
+        self.setup_ports_ui()
+        self.setup_arp_ui()
+        self.setup_dos_ui()
+        self.setup_trace_ui()
+        
+    def setup_master_view(self):
+        # Controls Frame
+        controls_frame = tb.Frame(self.top_frame)
+        controls_frame.pack(fill=X, pady=(0, 10))
+        
+        # Row 0
+        tb.Label(controls_frame, text="Interface:", font=("Helvetica", 10)).grid(row=0, column=0, sticky=W, padx=(0,5), pady=5)
+        self.iface_combo = tb.Combobox(controls_frame, values=list(self.interfaces.keys()), state="readonly", width=30, bootstyle=PRIMARY)
+        if self.interfaces:
+            self.iface_combo.current(0)
+        self.iface_combo.grid(row=0, column=1, sticky=W, padx=(0, 15), pady=5)
+        self.iface_combo.bind("<<ComboboxSelected>>", self.on_iface_changed)
+        
+        tb.Label(controls_frame, text="IP Range:", font=("Helvetica", 10)).grid(row=0, column=2, sticky=W, padx=(0,5), pady=5)
+        self.ip_entry = tb.Entry(controls_frame, width=20)
         self.ip_entry.insert(0, "192.168.1.0/24")
-        self.ip_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.ip_entry.grid(row=0, column=3, sticky=W, padx=(0, 15), pady=5)
+        
+        # Row 1
+        tb.Label(controls_frame, text="Ports (optional):", font=("Helvetica", 10)).grid(row=1, column=0, sticky=W, padx=(0,5), pady=5)
+        self.port_entry = tb.Entry(controls_frame, width=12)
+        self.port_entry.insert(0, "20-1000")
+        self.port_entry.grid(row=1, column=1, sticky=W, padx=(0, 15), pady=5)
+        
+        self.scan_ports_var = tb.BooleanVar(value=False)
+        self.scan_ports_check = tb.Checkbutton(controls_frame, text="Scan Ports", variable=self.scan_ports_var, bootstyle="round-toggle")
+        self.scan_ports_check.grid(row=1, column=2, sticky=W, padx=(0, 15), pady=5)
+        
+        # Scan Button
+        self.scan_btn = tb.Button(controls_frame, text="Start Scan", command=self.start_host_scan, bootstyle=SUCCESS)
+        self.scan_btn.grid(row=1, column=3, sticky=W, pady=5)
+        
+        self.scan_progress = tb.Progressbar(self.top_frame, mode='indeterminate', bootstyle=SUCCESS)
+        # Packed when scanning starts
+        
+        # Host Table Frame
+        table_frame = tb.Frame(self.top_frame)
+        table_frame.pack(fill=BOTH, expand=True, pady=(5, 0))
+        
+        columns = ("ip", "mac", "os", "ports")
+        self.host_tree = tb.Treeview(table_frame, columns=columns, show="headings", bootstyle=INFO, selectmode="browse")
+        self.host_tree.heading("ip", text="IP Address")
+        self.host_tree.heading("mac", text="MAC Address")
+        self.host_tree.heading("os", text="OS Guess")
+        self.host_tree.heading("ports", text="Open Ports Summary")
+        
+        self.host_tree.column("ip", width=120)
+        self.host_tree.column("mac", width=150)
+        self.host_tree.column("os", width=150)
+        self.host_tree.column("ports", width=200)
+        
+        scroll = tb.Scrollbar(table_frame, orient=VERTICAL, command=self.host_tree.yview, bootstyle=ROUND)
+        self.host_tree.configure(yscrollcommand=scroll.set)
+        
+        self.host_tree.pack(side=LEFT, fill=BOTH, expand=True)
+        scroll.pack(side=RIGHT, fill=Y)
+        
+        # Bind row selection
+        self.host_tree.bind("<<TreeviewSelect>>", self.on_host_selected)
+        
+        self.discovered_hosts = [] # Store host objects
 
-        tk.Label(input_frame, text="Interface:").grid(row=1, column=0, sticky="w")
-        self.iface_combo = ttk.Combobox(input_frame, values=get_if_list(), width=27)
-        try:
-            self.iface_combo.set(conf.iface.name if hasattr(conf.iface, 'name') else conf.iface)
-        except:
-            if self.iface_combo['values']:
-                self.iface_combo.current(0)
-        self.iface_combo.grid(row=1, column=1, padx=5, pady=5)
+    def on_iface_changed(self, event=None):
+        # Attempt to auto-update gateway IP on interface switch
+        gw = get_gateway()
+        if gw and hasattr(self, 'gw_ip_entry'):
+            self.gw_ip_entry.delete(0, END)
+            self.gw_ip_entry.insert(0, gw)
 
-        self.scan_btn = tk.Button(input_frame, text="Discover Hosts", command=self._start_host_discovery,
-                                  bg="#2ecc71", fg="white", font=("Arial", 10, "bold"), padx=15)
-        self.scan_btn.grid(row=0, column=2, rowspan=2, padx=20)
-
-        self.status_label = tk.Label(self, text="Enter range and click Discover", fg="gray")
-        self.status_label.pack()
-
-        list_frame = tk.LabelFrame(self, text="Discovered Hosts (Click for details/Port Scan)", padx=10, pady=10)
-        list_frame.pack(fill="both", expand=True, padx=20, pady=10)
-
-        self.canvas = tk.Canvas(list_frame)
-        self.scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=self.canvas.yview)
-        self.scrollable_frame = tk.Frame(self.canvas)
-        self.scrollable_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-
-    def _start_host_discovery(self):
-        """
-        Validates input and starts host discovery in background.
-        :return: None
-        """
+    def start_host_scan(self):
+        friendly_iface = self.iface_combo.get()
+        if not friendly_iface:
+            messagebox.showerror("Error", "Please select an interface.")
+            return
+            
+        real_iface = self.interfaces[friendly_iface]
         ip_range = self.ip_entry.get().strip()
-        if not is_valid_ip(ip_range):
-            messagebox.showerror("Error", f"Invalid IP address or range: {ip_range}")
+        do_port_scan = self.scan_ports_var.get()
+        port_range = self.port_entry.get().strip() if do_port_scan else None
+        
+        if not ip_range:
+            messagebox.showerror("Error", "Please enter an IP range.")
+            return
+            
+        self.scan_btn.config(state=DISABLED, text="Scanning...")
+        self.scan_progress.pack(fill=X, pady=(0, 5))
+        self.scan_progress.start(10)
+        
+        # Clear table
+        for item in self.host_tree.get_children():
+            self.host_tree.delete(item)
+        self.discovered_hosts = []
+        
+        # Deselect host & update notebook
+        self.active_host = None
+        self.detail_notebook.tab(self.ports_tab, state="disabled")
+        self.detail_notebook.tab(self.arp_tab, state="disabled")
+        self.detail_notebook.tab(self.dos_tab, state="disabled")
+        self.detail_notebook.tab(self.trace_tab, state="disabled")
+        self.detail_notebook.select(self.summary_tab)
+        self.no_host_label.config(text="Select a host from the table above to view details and launch attacks.", foreground="gray")
+        
+        threading.Thread(target=self.run_scan, args=(real_iface, ip_range, do_port_scan, port_range), daemon=True).start()
+        
+    def run_scan(self, iface, ip_range, do_port_scan, port_range):
+        try:
+            port_r = None
+            if do_port_scan and port_range:
+                if '-' in port_range:
+                    start, end = map(int, port_range.split('-'))
+                    port_r = (start, end)
+                else:
+                    port_r = int(port_range)
+                    
+            scanner = NetworkScanner(ip_range=ip_range, port_range=port_r, iface=iface)
+            scanner.discover_hosts()
+            
+            if do_port_scan and port_r is not None:
+                for host in scanner.hosts:
+                    scanner.scan_ports(host)
+                    
+            self.after(0, self.on_scan_complete, scanner.hosts)
+        except Exception as e:
+            self.after(0, self.on_scan_error, str(e))
+            
+    def on_scan_complete(self, hosts):
+        self.scan_progress.stop()
+        self.scan_progress.pack_forget()
+        self.scan_btn.config(state=NORMAL, text="Start Scan")
+        self.discovered_hosts = hosts
+        
+        if not hosts:
+            messagebox.showinfo("Scan Complete", "No hosts found in the specified range.")
+            return
+            
+        for i, host in enumerate(hosts):
+            open_ports_count = len([p for p in host.ports if "open" in p.status])
+            port_summary = f"{open_ports_count} open ports" if open_ports_count > 0 else "None found/Scanned"
+            os_guess = host.os if host.os else "Unknown"
+            
+            self.host_tree.insert("", END, iid=str(i), values=(host.ip_address, host.mac_address, os_guess, port_summary))
+
+    def on_scan_error(self, err_msg):
+        self.scan_progress.stop()
+        self.scan_progress.pack_forget()
+        self.scan_btn.config(state=NORMAL, text="Start Scan")
+        messagebox.showerror("Scan Error", f"An error occurred during scan:\n{err_msg}")
+
+    def on_host_selected(self, event):
+        selected_items = self.host_tree.selection()
+        if not selected_items:
+            return
+            
+        # We explicitly DO NOT stop attacks here to maintain backend state stability.
+            
+        idx = int(selected_items[0])
+        self.active_host = self.discovered_hosts[idx]
+        
+        self.no_host_label.config(text=f"Selected Host:\nIP: {self.active_host.ip_address}\nMAC: {self.active_host.mac_address}", foreground="white")
+        
+        # Enable Notebook Tabs
+        self.detail_notebook.tab(self.ports_tab, state="normal")
+        self.detail_notebook.tab(self.arp_tab, state="normal")
+        self.detail_notebook.tab(self.dos_tab, state="normal")
+        self.detail_notebook.tab(self.trace_tab, state="normal")
+        
+        # Refresh tabs with new host data
+        self.refresh_ports_tab()
+        
+        # Pre-fill trace target
+        self.trace_target_entry.delete(0, END)
+        self.trace_target_entry.insert(0, self.active_host.ip_address)
+
+    # --- PORT SCANNER UI ---
+    def setup_ports_ui(self):
+        top_frame = tb.Frame(self.ports_tab)
+        top_frame.pack(fill=X, pady=(0, 15))
+        
+        tb.Label(top_frame, text="Port Range:", font=("Helvetica", 11)).grid(row=0, column=0, sticky=W, padx=(0, 5), pady=5)
+        self.detail_port_entry = tb.Entry(top_frame, width=15)
+        self.detail_port_entry.insert(0, "20-1000")
+        self.detail_port_entry.grid(row=0, column=1, sticky=W, padx=(0, 15), pady=5)
+        
+        self.target_scan_btn = tb.Button(top_frame, text="Scan Target Ports", command=self.scan_target_ports, bootstyle=SUCCESS)
+        self.target_scan_btn.grid(row=0, column=2, sticky=W, padx=(0, 15), pady=5)
+        
+        tb.Label(top_frame, text="Filter:", font=("Helvetica", 11)).grid(row=1, column=0, sticky=W, padx=(0, 5), pady=5)
+        self.status_filter_var = tb.StringVar(value="All")
+        self.status_combo = tb.Combobox(top_frame, textvariable=self.status_filter_var, values=["All", "open", "closed", "filtered", "open|filtered"], state="readonly", width=15, bootstyle=PRIMARY)
+        self.status_combo.grid(row=1, column=1, sticky=W, pady=5)
+        self.status_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_ports_tab())
+        
+        self.port_progress = tb.Progressbar(self.ports_tab, mode='indeterminate', bootstyle=INFO)
+        
+        # Results Tree
+        columns = ("Port", "Status", "Service")
+        self.port_tree = tb.Treeview(self.ports_tab, columns=columns, show="headings", bootstyle=INFO)
+        for col in columns:
+            self.port_tree.heading(col, text=col)
+            self.port_tree.column(col, width=120, anchor=CENTER)
+            
+        scroll = tb.Scrollbar(self.ports_tab, orient=VERTICAL, command=self.port_tree.yview, bootstyle=ROUND)
+        self.port_tree.configure(yscrollcommand=scroll.set)
+        
+        self.port_tree.pack(side=LEFT, fill=BOTH, expand=True)
+        scroll.pack(side=RIGHT, fill=Y)
+
+    def refresh_ports_tab(self):
+        if not self.active_host:
+            return
+            
+        for item in self.port_tree.get_children():
+            self.port_tree.delete(item)
+            
+        filter_status = self.status_filter_var.get().lower()
+        for port in self.active_host.ports:
+            if filter_status == "all" or filter_status in port.status.lower():
+                self.port_tree.insert("", END, values=(port.port_number, port.status, port.service))
+                
+    def scan_target_ports(self):
+        if not self.active_host: return
+        
+        port_range_str = self.detail_port_entry.get().strip()
+        try:
+            if '-' in port_range_str:
+                start, end = map(int, port_range_str.split('-'))
+                port_range = (start, end)
+            else:
+                port_range = int(port_range_str)
+        except ValueError:
+            messagebox.showerror("Error", "Invalid port range format. Use a number or 'start-end'.")
+            return
+            
+        self.target_scan_btn.config(state=DISABLED, text="Scanning...")
+        self.port_progress.pack(fill=X, pady=(0, 10), before=self.port_tree)
+        self.port_progress.start(10)
+        
+        self.active_host.ports = []
+        self.refresh_ports_tab()
+        
+        friendly_iface = self.iface_combo.get()
+        real_iface = self.interfaces[friendly_iface]
+        
+        threading.Thread(target=self._run_target_port_scan, args=(port_range, real_iface), daemon=True).start()
+        
+    def _run_target_port_scan(self, port_range, iface):
+        try:
+            scanner = NetworkScanner(ip_range=self.active_host.ip_address, port_range=port_range, iface=iface)
+            scanner.scan_ports(self.active_host)
+            self.after(0, self._on_target_port_scan_complete)
+        except Exception as e:
+            self.after(0, self._on_target_port_scan_error, str(e))
+            
+    def _on_target_port_scan_complete(self):
+        self.port_progress.stop()
+        self.port_progress.pack_forget()
+        self.target_scan_btn.config(state=NORMAL, text="Scan Target Ports")
+        self.refresh_ports_tab()
+        
+        # update master table summary
+        if self.active_host:
+            for item in self.host_tree.get_children():
+                vals = self.host_tree.item(item, 'values')
+                if vals[0] == self.active_host.ip_address:
+                    open_ports_count = len([p for p in self.active_host.ports if "open" in p.status])
+                    port_summary = f"{open_ports_count} open ports" if open_ports_count > 0 else "None found"
+                    # update just the port summary column
+                    self.host_tree.set(item, column="ports", value=port_summary)
+                    if self.active_host.os:
+                         self.host_tree.set(item, column="os", value=self.active_host.os)
+                    break
+
+        if not self.active_host.ports:
+            messagebox.showinfo("Scan Complete", "No open ports found.")
+            
+    def _on_target_port_scan_error(self, err):
+        self.port_progress.stop()
+        self.port_progress.pack_forget()
+        self.target_scan_btn.config(state=NORMAL, text="Scan Target Ports")
+        messagebox.showerror("Error", err)
+
+    # --- ARP POISONING UI ---
+    def setup_arp_ui(self):
+        input_frame = tb.Frame(self.arp_tab)
+        input_frame.pack(fill=X, pady=(0, 15))
+        
+        tb.Label(input_frame, text="Gateway IP:").grid(row=0, column=0, sticky=W, pady=5)
+        self.gw_ip_entry = tb.Entry(input_frame, width=30)
+        gw = get_gateway()
+        if gw:
+            self.gw_ip_entry.insert(0, gw)
+        self.gw_ip_entry.grid(row=0, column=1, sticky=W, pady=5, padx=15)
+        
+        flags_frame = tb.Labelframe(self.arp_tab, text="Attack Options", padding="15", bootstyle=WARNING)
+        flags_frame.pack(fill=X, pady=15)
+        
+        self.do_save_var = tb.BooleanVar(value=False)
+        tb.Checkbutton(flags_frame, text="Save intercepted traffic to PCAP", variable=self.do_save_var, bootstyle="round-toggle").pack(anchor=W, pady=5)
+        
+        self.dns_spoof_var = tb.BooleanVar(value=False)
+        tb.Checkbutton(flags_frame, text="Enable DNS Spoofing", variable=self.dns_spoof_var, command=self.toggle_dns_spoof, bootstyle="round-toggle").pack(anchor=W, pady=5)
+        
+        self.dns_frame = tb.Frame(flags_frame)
+        tb.Label(self.dns_frame, text="Domain to redirect from:").grid(row=0, column=0, sticky=W, pady=5)
+        self.orig_domain_entry = tb.Entry(self.dns_frame, width=30)
+        self.orig_domain_entry.grid(row=0, column=1, sticky=W, pady=5, padx=10)
+        
+        tb.Label(self.dns_frame, text="Domain/IP to redirect to:").grid(row=1, column=0, sticky=W, pady=5)
+        self.spoofed_ip_entry = tb.Entry(self.dns_frame, width=30)
+        self.spoofed_ip_entry.grid(row=1, column=1, sticky=W, pady=5, padx=10)
+        
+        ctrl_frame = tb.Frame(self.arp_tab)
+        ctrl_frame.pack(fill=X, pady=25)
+        
+        self.arp_start_btn = tb.Button(ctrl_frame, text="Start MiTM Attack", command=self.start_arp_attack, bootstyle=DANGER)
+        self.arp_start_btn.pack(side=LEFT, padx=(0, 15), ipadx=10, ipady=5)
+        
+        self.arp_stop_btn = tb.Button(ctrl_frame, text="Stop Attack", command=self.stop_arp_attack, state=DISABLED, bootstyle=SECONDARY)
+        self.arp_stop_btn.pack(side=LEFT, ipadx=10, ipady=5)
+        
+        self.arp_status_lbl = tb.Label(self.arp_tab, text="Status: Ready", font=("Helvetica", 11, "bold"), bootstyle=SUCCESS)
+        self.arp_status_lbl.pack(anchor=W, pady=15)
+
+    def toggle_dns_spoof(self):
+        if self.dns_spoof_var.get():
+            self.dns_frame.pack(fill=X, pady=(15, 0))
+        else:
+            self.dns_frame.pack_forget()
+
+    def start_arp_attack(self):
+        if self.arp_attack and self.arp_attack.is_running:
+            messagebox.showerror("Error", "An ARP attack is already running. Please stop it before starting a new one.")
+            return
+            
+        if not self.active_host: return
+        
+        gw_ip = self.gw_ip_entry.get().strip()
+        if not is_valid_ip(gw_ip):
+            messagebox.showerror("Error", "A valid Gateway IP is required.")
+            return
+            
+        do_save = self.do_save_var.get()
+        redirect_to = self.spoofed_ip_entry.get().strip() if self.dns_spoof_var.get() else None
+        orig_domain = self.orig_domain_entry.get().strip() if self.dns_spoof_var.get() else None
+        
+        if self.dns_spoof_var.get() and (not redirect_to or not orig_domain):
+            messagebox.showerror("Error", "Domain to redirect from and Domain/IP to redirect to are required for DNS spoofing.")
+            return
+            
+        self.arp_start_btn.config(state=DISABLED)
+        self.arp_status_lbl.config(text="Status: Starting Attack...", bootstyle=WARNING)
+        
+        friendly_iface = self.iface_combo.get()
+        real_iface = self.interfaces[friendly_iface]
+        
+        threading.Thread(target=self._init_and_start_arp, args=(gw_ip, real_iface, do_save, redirect_to, orig_domain), daemon=True).start()
+
+    def _init_and_start_arp(self, gw_ip, iface, do_save, redirect_to, orig_domain):
+        try:
+            spoofed_ip = None
+            if redirect_to:
+                if not is_valid_ip(redirect_to):
+                    resolved_ip = TraceScanner.resolve_hostname(redirect_to)
+                    if not resolved_ip:
+                        self.after(0, self._on_arp_error, f"Could not resolve domain: {redirect_to}")
+                        return
+                    spoofed_ip = resolved_ip
+                else:
+                    spoofed_ip = redirect_to
+
+            gw_mac = get_mac_by_ip(gw_ip, iface)
+            if not gw_mac:
+                self.after(0, self._on_arp_error, "Failed to resolve Gateway MAC.")
+                return
+                
+            gateway = models.Host(ip_address=gw_ip, mac_address=gw_mac)
+            self.arp_attack = ArpPoisoning(self.active_host, gateway, iface, do_save, spoofed_ip, orig_domain)
+            self.arp_attack.start()
+            
+            self.after(0, self._on_arp_started)
+        except Exception as e:
+            self.after(0, self._on_arp_error, str(e))
+            
+    def _on_arp_started(self):
+        self.arp_stop_btn.config(state=NORMAL)
+        self.arp_status_lbl.config(text=f"Status: Active on {self.active_host.ip_address}", bootstyle=DANGER)
+        
+    def _on_arp_error(self, err):
+        self.arp_start_btn.config(state=NORMAL)
+        self.arp_status_lbl.config(text=f"Status: Error - {err}", bootstyle=DANGER)
+        
+    def stop_arp_attack(self):
+        if self.arp_attack:
+            self.arp_stop_btn.config(state=DISABLED)
+            self.arp_status_lbl.config(text="Status: Stopping & Restoring Tables...", bootstyle=WARNING)
+            threading.Thread(target=self._stop_arp_thread, daemon=True).start()
+            
+    def _stop_arp_thread(self):
+        try:
+            self.arp_attack.stop()
+        except Exception:
+            pass
+        self.after(0, self._on_arp_stopped)
+        
+    def _on_arp_stopped(self):
+        self.arp_attack = None
+        self.arp_start_btn.config(state=NORMAL)
+        self.arp_status_lbl.config(text="Status: Stopped & Restored", bootstyle=SUCCESS)
+
+    # --- DOS UI ---
+    def setup_dos_ui(self):
+        st_frame = tb.Labelframe(self.dos_tab, text="Single Target DoS (ARP Blackhole)", padding="15", bootstyle=DANGER)
+        st_frame.pack(fill=X, pady=(0, 20))
+        tb.Label(st_frame, text="Cuts off the active target from the gateway by poisoning both with dummy MACs.").pack(anchor=W, pady=(0, 15))
+        
+        st_btn_frame = tb.Frame(st_frame)
+        st_btn_frame.pack(fill=X)
+        self.st_dos_start_btn = tb.Button(st_btn_frame, text="Start Target DoS", command=self.start_st_dos, bootstyle=DANGER)
+        self.st_dos_start_btn.grid(row=0, column=0, padx=(0, 15), pady=5, ipadx=5, ipady=5)
+        self.st_dos_stop_btn = tb.Button(st_btn_frame, text="Stop Target DoS", command=self.stop_st_dos, state=DISABLED, bootstyle=SECONDARY)
+        self.st_dos_stop_btn.grid(row=0, column=1, pady=5, ipadx=5, ipady=5)
+        
+        self.st_dos_status_lbl = tb.Label(st_frame, text="Status: Ready", bootstyle=SUCCESS, font=("Helvetica", 10, "bold"))
+        self.st_dos_status_lbl.pack(anchor=W, pady=10)
+        
+        dhcp_frame = tb.Labelframe(self.dos_tab, text="DHCP Starvation (Network-Wide)", padding="15", bootstyle=DANGER)
+        dhcp_frame.pack(fill=X)
+        
+        warning_lbl = tb.Label(dhcp_frame, text="WARNING: Floods the network with DHCP requests, exhausting the pool for ALL devices.", bootstyle=WARNING, wraplength=400)
+        warning_lbl.pack(anchor=W, pady=(0, 15), fill=X)
+        
+        dhcp_btn_frame = tb.Frame(dhcp_frame)
+        dhcp_btn_frame.pack(fill=X)
+        self.dhcp_start_btn = tb.Button(dhcp_btn_frame, text="Start DHCP Starvation", command=self.start_dhcp, bootstyle=DANGER)
+        self.dhcp_start_btn.grid(row=0, column=0, padx=(0, 10), pady=5, ipadx=5, ipady=5)
+        self.dhcp_stop_btn = tb.Button(dhcp_btn_frame, text="Stop DHCP Starvation", command=self.stop_dhcp, state=DISABLED, bootstyle=SECONDARY)
+        self.dhcp_stop_btn.grid(row=0, column=1, pady=5, ipadx=5, ipady=5)
+        
+        self.dhcp_status_lbl = tb.Label(dhcp_frame, text="Status: Ready", bootstyle=SUCCESS, font=("Helvetica", 10, "bold"))
+        self.dhcp_status_lbl.pack(anchor=W, pady=(10, 0))
+
+    def start_st_dos(self):
+        if self.st_dos_attack and self.st_dos_attack.is_running:
+            messagebox.showerror("Error", "A Single Target DoS attack is already running. Please stop it first.")
             return
 
-        iface = self.iface_combo.get()
-        self.scan_btn.config(state=tk.DISABLED, text="Searching...")
-        self.status_label.config(text=f"Searching for hosts in {ip_range}...", fg="blue")
-
-        for widget in self.scrollable_frame.winfo_children():
-            widget.destroy()
-
-        thread = threading.Thread(target=self._run_discovery, args=(ip_range, iface))
-        thread.daemon = True
-        thread.start()
-
-    def _run_discovery(self, ip_range, iface):
-        """
-        Performs host discovery in background thread.
-        :return: None
-        """
-        try:
-            self.scanner = scanner.NetworkScanner(ip_range, (1, 1024)) # Default port range
-            self.hosts = self.scanner.run_scan(iface)
-            self.after(0, self._display_hosts)
-        except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Discovery Error", str(e)))
-            self.after(0, self._reset_btn)
-
-    def _display_hosts(self):
-        """
-        Updates UI with list of discovered hosts.
-        :return: None
-        """
-        if not self.hosts:
-             tk.Label(self.scrollable_frame, text="No active hosts found.").pack(pady=10)
-        else:
-            for host in self.hosts:
-                text = f"IP: {host.ip_address:<15} | MAC: {host.mac_address}"
-                btn = tk.Button(self.scrollable_frame, text=text, font=("Courier", 10),
-                                anchor="w", padx=10, pady=5, command=lambda h=host: self._open_details(h))
-                btn.pack(fill="x", pady=2)
+        if not self.active_host: return
+        gw_ip = get_gateway()
+        if not is_valid_ip(gw_ip):
+            messagebox.showerror("Error", "Could not detect a valid gateway IP automatically.")
+            return
+            
+        self.st_dos_start_btn.config(state=DISABLED)
+        self.st_dos_status_lbl.config(text="Status: Resolving Gateway...", bootstyle=WARNING)
         
-        self.status_label.config(text=f"Found {len(self.hosts)} hosts.", fg="green")
-        self._reset_btn()
+        friendly_iface = self.iface_combo.get()
+        real_iface = self.interfaces[friendly_iface]
+        
+        threading.Thread(target=self._init_st_dos, args=(gw_ip, real_iface), daemon=True).start()
+        
+    def _init_st_dos(self, gw_ip, iface):
+        try:
+            gw_mac = get_mac_by_ip(gw_ip, iface)
+            if not gw_mac:
+                self.after(0, self._on_st_dos_error, "Could not resolve Gateway MAC.")
+                return
+            self.st_dos_attack = SingleTargetDos(self.active_host, gw_ip, gw_mac, iface)
+            self.st_dos_attack.start()
+            self.after(0, self._on_st_dos_started)
+        except Exception as e:
+            self.after(0, self._on_st_dos_error, str(e))
+            
+    def _on_st_dos_started(self):
+        self.st_dos_stop_btn.config(state=NORMAL)
+        self.st_dos_status_lbl.config(text=f"Status: Active on {self.active_host.ip_address}", bootstyle=DANGER)
+        
+    def _on_st_dos_error(self, err):
+        self.st_dos_start_btn.config(state=NORMAL)
+        self.st_dos_status_lbl.config(text=f"Status: Error - {err}", bootstyle=DANGER)
+        
+    def stop_st_dos(self):
+        if self.st_dos_attack:
+            self.st_dos_stop_btn.config(state=DISABLED)
+            self.st_dos_status_lbl.config(text="Status: Stopping...", bootstyle=WARNING)
+            threading.Thread(target=self._stop_st_dos_thread, daemon=True).start()
+            
+    def _stop_st_dos_thread(self):
+        self.st_dos_attack.stop()
+        self.after(0, self._on_st_dos_stopped)
+        
+    def _on_st_dos_stopped(self):
+        self.st_dos_attack = None
+        self.st_dos_start_btn.config(state=NORMAL)
+        self.st_dos_status_lbl.config(text="Status: Stopped", bootstyle=SUCCESS)
 
-    def _reset_btn(self):
-        """
-        Resets discovery button state.
-        :return: None
-        """
-        self.scan_btn.config(state=tk.NORMAL, text="Discover Hosts")
+    def start_dhcp(self):
+        if self.dhcp_attack and self.dhcp_attack.is_running:
+            return
 
-    def _open_details(self, host):
-        """
-        Opens HostDetailWindow for host.
-        :return: None
-        """
-        HostDetailWindow(self, host, self.scanner, self.iface_combo.get())
+        self.dhcp_start_btn.config(state=DISABLED)
+        self.dhcp_stop_btn.config(state=NORMAL)
+        self.dhcp_status_lbl.config(text="Status: Active (Starving DHCP pool)", bootstyle=DANGER)
+        
+        friendly_iface = self.iface_combo.get()
+        real_iface = self.interfaces[friendly_iface]
+        
+        self.dhcp_attack = DHCPStarvation(iface=real_iface)
+        self.dhcp_attack.start()
+        
+    def stop_dhcp(self):
+        if self.dhcp_attack:
+            self.dhcp_stop_btn.config(state=DISABLED)
+            self.dhcp_status_lbl.config(text="Status: Stopping...", bootstyle=WARNING)
+            threading.Thread(target=self._stop_dhcp_thread, daemon=True).start()
+            
+    def _stop_dhcp_thread(self):
+        self.dhcp_attack.stop()
+        self.after(0, self._on_dhcp_stopped)
+        
+    def _on_dhcp_stopped(self):
+        self.dhcp_attack = None
+        self.dhcp_start_btn.config(state=NORMAL)
+        self.dhcp_status_lbl.config(text="Status: Stopped", bootstyle=SUCCESS)
+
+    # --- GLOBAL TRACEROUTE UI ---
+    def setup_trace_ui(self):
+        top_frame = tb.Frame(self.trace_tab)
+        top_frame.pack(fill=X, pady=(0, 15))
+        
+        tb.Label(top_frame, text="Target IP/Domain:", font=("Helvetica", 11)).grid(row=0, column=0, sticky=W, padx=(0, 5), pady=5)
+        self.trace_target_entry = tb.Entry(top_frame, width=25)
+        # Prefilled in on_host_selected
+        self.trace_target_entry.grid(row=0, column=1, sticky=W, padx=(0, 15), pady=5)
+        
+        tb.Label(top_frame, text="Max Hops:", font=("Helvetica", 11)).grid(row=0, column=2, sticky=W, padx=(0, 5), pady=5)
+        self.hops_entry = tb.Entry(top_frame, width=8)
+        self.hops_entry.insert(0, "30")
+        self.hops_entry.grid(row=0, column=3, sticky=W, padx=(0, 15), pady=5)
+        
+        self.trace_btn = tb.Button(top_frame, text="Start Trace", command=self.start_trace, bootstyle=PRIMARY)
+        self.trace_btn.grid(row=0, column=4, sticky=W, pady=5)
+        
+        self.trace_progress = tb.Progressbar(self.trace_tab, mode='indeterminate', bootstyle=PRIMARY)
+        
+        # Results Tree
+        columns = ("Hop", "IP Address", "Time")
+        self.trace_tree = tb.Treeview(self.trace_tab, columns=columns, show="headings", bootstyle=PRIMARY)
+        for col in columns:
+            self.trace_tree.heading(col, text=col)
+            
+        self.trace_tree.column("Hop", width=80, anchor=CENTER)
+        self.trace_tree.column("IP Address", width=300, anchor=W)
+        self.trace_tree.column("Time", width=150, anchor=W)
+            
+        scroll = tb.Scrollbar(self.trace_tab, orient=VERTICAL, command=self.trace_tree.yview, bootstyle=ROUND)
+        self.trace_tree.configure(yscrollcommand=scroll.set)
+        
+        self.trace_tree.pack(side=LEFT, fill=BOTH, expand=True)
+        scroll.pack(side=RIGHT, fill=Y)
+
+    def start_trace(self):
+        target = self.trace_target_entry.get().strip()
+        if not target:
+            messagebox.showerror("Error", "Target cannot be empty.")
+            return
+            
+        try:
+            max_hops = int(self.hops_entry.get().strip())
+        except ValueError:
+            messagebox.showerror("Error", "Max hops must be a valid integer.")
+            return
+            
+        self.trace_btn.config(state=DISABLED, text="Tracing...")
+        self.trace_progress.pack(fill=X, pady=(0, 10), before=self.trace_tree)
+        self.trace_progress.start(10)
+        
+        for item in self.trace_tree.get_children():
+            self.trace_tree.delete(item)
+            
+        threading.Thread(target=self._run_trace, args=(target, max_hops), daemon=True).start()
+        
+    def _run_trace(self, target, max_hops):
+        try:
+            target_ip = target
+            if not is_valid_ip(target):
+                resolved_ip = TraceScanner.resolve_hostname(target)
+                if not resolved_ip:
+                    self.after(0, self._on_trace_error, f"Could not resolve hostname: {target}")
+                    return
+                target_ip = resolved_ip
+                
+            scanner = TraceScanner(target_ip=target_ip, max_hops=max_hops)
+            scanner.start()
+            self.after(0, self._on_trace_complete, scanner.path)
+        except Exception as e:
+            self.after(0, self._on_trace_error, str(e))
+            
+    def _on_trace_complete(self, path):
+        self.trace_progress.stop()
+        self.trace_progress.pack_forget()
+        self.trace_btn.config(state=NORMAL, text="Start Trace")
+        
+        for hop in path:
+            self.trace_tree.insert("", END, values=(hop['hop'], hop['ip'], hop['time']))
+        
+    def _on_trace_error(self, err):
+        self.trace_progress.stop()
+        self.trace_progress.pack_forget()
+        self.trace_btn.config(state=NORMAL, text="Start Trace")
+        messagebox.showerror("Trace Error", f"An error occurred during traceroute:\n{err}")
 
 if __name__ == "__main__":
     app = NetworkMapperGUI()
