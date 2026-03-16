@@ -3,6 +3,7 @@ from ttkbootstrap.constants import *
 from tkinter import messagebox
 import threading
 from scapy.interfaces import get_working_ifaces
+from scapy.all import conf
 
 from scanner import NetworkScanner, TraceScanner
 from attacks import ArpPoisoning, DHCPStarvation, SingleTargetDos
@@ -19,6 +20,7 @@ class NetworkMapperGUI(tb.Window):
         self.populate_interfaces()
         
         self.active_host = None # Keep track of selected host
+        self.ports_need_refresh = False # Optimization for tab loading
         
         # Global attacks variables
         self.arp_attack = None
@@ -26,6 +28,7 @@ class NetworkMapperGUI(tb.Window):
         self.dhcp_attack = None
         
         self.setup_ui()
+        self.select_default_interface()
         
         # Dynamically set the minimum size so buttons never get cut off
         self.update_idletasks()
@@ -37,6 +40,16 @@ class NetworkMapperGUI(tb.Window):
             if friendly_name in self.interfaces:
                 friendly_name = f"{friendly_name} ({iface.name})"
             self.interfaces[friendly_name] = iface.name
+            
+    def select_default_interface(self):
+        default_iface_name = str(conf.iface)
+        for friendly, real in self.interfaces.items():
+            if real == default_iface_name:
+                self.iface_combo.set(friendly)
+                break
+        else:
+            if self.interfaces:
+                self.iface_combo.current(0)
             
     def setup_ui(self):
         # Create a PanedWindow to split top and bottom halves
@@ -56,6 +69,7 @@ class NetworkMapperGUI(tb.Window):
         # The actual notebook (Always packed to prevent UI jumps)
         self.detail_notebook = tb.Notebook(self.bottom_frame)
         self.detail_notebook.pack(fill=BOTH, expand=True)
+        self.detail_notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         
         self.summary_tab = tb.Frame(self.detail_notebook, padding="15")
         self.detail_notebook.add(self.summary_tab, text="Summary")
@@ -87,8 +101,6 @@ class NetworkMapperGUI(tb.Window):
         # Row 0
         tb.Label(controls_frame, text="Interface:", font=("Helvetica", 10)).grid(row=0, column=0, sticky=W, padx=(0,5), pady=5)
         self.iface_combo = tb.Combobox(controls_frame, values=list(self.interfaces.keys()), state="readonly", width=30, bootstyle=PRIMARY)
-        if self.interfaces:
-            self.iface_combo.current(0)
         self.iface_combo.grid(row=0, column=1, sticky=W, padx=(0, 15), pady=5)
         self.iface_combo.bind("<<ComboboxSelected>>", self.on_iface_changed)
         
@@ -98,14 +110,18 @@ class NetworkMapperGUI(tb.Window):
         self.ip_entry.grid(row=0, column=3, sticky=W, padx=(0, 15), pady=5)
         
         # Row 1
-        tb.Label(controls_frame, text="Ports (optional):", font=("Helvetica", 10)).grid(row=1, column=0, sticky=W, padx=(0,5), pady=5)
-        self.port_entry = tb.Entry(controls_frame, width=12)
-        self.port_entry.insert(0, "20-1000")
-        self.port_entry.grid(row=1, column=1, sticky=W, padx=(0, 15), pady=5)
-        
         self.scan_ports_var = tb.BooleanVar(value=False)
-        self.scan_ports_check = tb.Checkbutton(controls_frame, text="Scan Ports", variable=self.scan_ports_var, bootstyle="round-toggle")
-        self.scan_ports_check.grid(row=1, column=2, sticky=W, padx=(0, 15), pady=5)
+        self.scan_ports_check = tb.Checkbutton(controls_frame, text="Scan Ports", variable=self.scan_ports_var, bootstyle="round-toggle", command=self.toggle_port_range_ui)
+        self.scan_ports_check.grid(row=1, column=0, sticky=W, padx=(0, 15), pady=5)
+        
+        self.port_range_frame = tb.Frame(controls_frame)
+        self.port_range_frame.grid(row=1, column=1, columnspan=2, sticky=W)
+        
+        tb.Label(self.port_range_frame, text="Range:", font=("Helvetica", 10)).pack(side=LEFT, padx=(0,5))
+        self.port_entry = tb.Entry(self.port_range_frame, width=12)
+        self.port_entry.insert(0, "20-1000")
+        self.port_entry.pack(side=LEFT, padx=(0, 15))
+        self.port_range_frame.grid_remove() # Hidden initially
         
         # Scan Button
         self.scan_btn = tb.Button(controls_frame, text="Start Scan", command=self.start_host_scan, bootstyle=SUCCESS)
@@ -140,6 +156,12 @@ class NetworkMapperGUI(tb.Window):
         self.host_tree.bind("<<TreeviewSelect>>", self.on_host_selected)
         
         self.discovered_hosts = [] # Store host objects
+
+    def toggle_port_range_ui(self):
+        if self.scan_ports_var.get():
+            self.port_range_frame.grid()
+        else:
+            self.port_range_frame.grid_remove()
 
     def on_iface_changed(self, event=None):
         # Attempt to auto-update gateway IP on interface switch
@@ -215,7 +237,7 @@ class NetworkMapperGUI(tb.Window):
             return
             
         for i, host in enumerate(hosts):
-            open_ports_count = len([p for p in host.ports if "open" in p.status])
+            open_ports_count = len([p for p in host.ports if p.status == "open"])
             port_summary = f"{open_ports_count} open ports" if open_ports_count > 0 else "None found/Scanned"
             os_guess = host.os if host.os else "Unknown"
             
@@ -245,12 +267,24 @@ class NetworkMapperGUI(tb.Window):
         self.detail_notebook.tab(self.dos_tab, state="normal")
         self.detail_notebook.tab(self.trace_tab, state="normal")
         
-        # Refresh tabs with new host data
-        self.refresh_ports_tab()
+        # Mark ports as needing refresh but only refresh if the tab is visible
+        self.ports_need_refresh = True
+        if self.is_ports_tab_visible():
+            self.refresh_ports_tab()
         
         # Pre-fill trace target
         self.trace_target_entry.delete(0, END)
         self.trace_target_entry.insert(0, self.active_host.ip_address)
+
+    def on_tab_changed(self, event=None):
+        if self.is_ports_tab_visible() and self.ports_need_refresh:
+            self.refresh_ports_tab()
+
+    def is_ports_tab_visible(self):
+        try:
+            return self.detail_notebook.tab(self.detail_notebook.select(), "text") == "Port Scanner"
+        except:
+            return False
 
     # --- PORT SCANNER UI ---
     def setup_ports_ui(self):
@@ -265,16 +299,22 @@ class NetworkMapperGUI(tb.Window):
         self.target_scan_btn = tb.Button(top_frame, text="Scan Target Ports", command=self.scan_target_ports, bootstyle=SUCCESS)
         self.target_scan_btn.grid(row=0, column=2, sticky=W, padx=(0, 15), pady=5)
         
-        tb.Label(top_frame, text="Filter:", font=("Helvetica", 11)).grid(row=1, column=0, sticky=W, padx=(0, 5), pady=5)
-        self.status_filter_var = tb.StringVar(value="All")
-        self.status_combo = tb.Combobox(top_frame, textvariable=self.status_filter_var, values=["All", "open", "closed", "filtered", "open|filtered"], state="readonly", width=15, bootstyle=PRIMARY)
+        tb.Label(top_frame, text="Status Filter:", font=("Helvetica", 11)).grid(row=1, column=0, sticky=W, padx=(0, 5), pady=5)
+        self.status_filter_var = tb.StringVar(value="open")
+        self.status_combo = tb.Combobox(top_frame, textvariable=self.status_filter_var, values=["All", "open", "closed", "filtered", "open|filtered"], state="readonly", width=12, bootstyle=PRIMARY)
         self.status_combo.grid(row=1, column=1, sticky=W, pady=5)
         self.status_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_ports_tab())
+
+        tb.Label(top_frame, text="Proto Filter:", font=("Helvetica", 11)).grid(row=1, column=2, sticky=W, padx=(0, 5), pady=5)
+        self.proto_filter_var = tb.StringVar(value="All")
+        self.proto_combo = tb.Combobox(top_frame, textvariable=self.proto_filter_var, values=["All", "TCP", "UDP"], state="readonly", width=10, bootstyle=PRIMARY)
+        self.proto_combo.grid(row=1, column=3, sticky=W, pady=5)
+        self.proto_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_ports_tab())
         
         self.port_progress = tb.Progressbar(self.ports_tab, mode='indeterminate', bootstyle=INFO)
         
         # Results Tree
-        columns = ("Port", "Status", "Service")
+        columns = ("Port", "Proto", "Status", "Service")
         self.port_tree = tb.Treeview(self.ports_tab, columns=columns, show="headings", bootstyle=INFO)
         for col in columns:
             self.port_tree.heading(col, text=col)
@@ -290,13 +330,36 @@ class NetworkMapperGUI(tb.Window):
         if not self.active_host:
             return
             
-        for item in self.port_tree.get_children():
-            self.port_tree.delete(item)
+        self.ports_need_refresh = False
+        
+        # Clear existing items
+        self.port_tree.delete(*self.port_tree.get_children())
             
         filter_status = self.status_filter_var.get().lower()
+        filter_proto = self.proto_filter_var.get().lower()
+
         for port in self.active_host.ports:
-            if filter_status == "all" or filter_status in port.status.lower():
-                self.port_tree.insert("", END, values=(port.port_number, port.status, port.service))
+            # Protocol filter
+            if filter_proto != "all" and port.proto != filter_proto:
+                continue
+            
+            # General view (no proto filter) -> hide "open|filtered" UDP ports
+            # Unless explicitly requested by the status filter
+            if filter_proto == "all" and port.proto == "udp" and port.status == "open|filtered":
+                if filter_status != "open|filtered":
+                    continue
+
+            # Status filter
+            port_status_lower = port.status.lower()
+            if filter_status != "all":
+                # Exact match for open/closed to avoid partial matches like "open" in "open|filtered"
+                if filter_status in ["open", "closed"]:
+                    if port_status_lower != filter_status:
+                        continue
+                elif filter_status not in port_status_lower:
+                    continue
+                
+            self.port_tree.insert("", END, values=(port.port_number, port.proto.upper(), port.status, port.service))
                 
     def scan_target_ports(self):
         if not self.active_host: return
@@ -343,7 +406,7 @@ class NetworkMapperGUI(tb.Window):
             for item in self.host_tree.get_children():
                 vals = self.host_tree.item(item, 'values')
                 if vals[0] == self.active_host.ip_address:
-                    open_ports_count = len([p for p in self.active_host.ports if "open" in p.status])
+                    open_ports_count = len([p for p in self.active_host.ports if p.status == "open"])
                     port_summary = f"{open_ports_count} open ports" if open_ports_count > 0 else "None found"
                     # update just the port summary column
                     self.host_tree.set(item, column="ports", value=port_summary)
@@ -353,6 +416,7 @@ class NetworkMapperGUI(tb.Window):
 
         if not self.active_host.ports:
             messagebox.showinfo("Scan Complete", "No open ports found.")
+
             
     def _on_target_port_scan_error(self, err):
         self.port_progress.stop()

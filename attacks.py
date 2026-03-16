@@ -327,7 +327,7 @@ class SingleTargetDos:
         """Continuously sends poison packets."""
         while self.is_running:
             self.send_poison_packets()
-            time.sleep(1.5)
+            time.sleep(0.2)
 
     def start(self):
         self.is_running = True
