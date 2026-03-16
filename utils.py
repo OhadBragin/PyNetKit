@@ -5,15 +5,30 @@ import subprocess
 import re
 from scapy.all import Ether, ARP, srp1, conf
 
-def get_mac_by_ip(target_ip, iface):
+def get_mac_by_ip(target_ip, iface, retries=3):
     """
-    Uses ARP requests to find the MAC address
-    associated with a given IP address on the local network.
+    Uses ARP requests to find the MAC address associated with an IP.
+    Sends multiple requests and retries to ensure reliability.
     """
-    arp_request = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=target_ip)
-    response = srp1(arp_request, timeout=2, iface=iface, verbose=False)
-    if response:
-        return response.hwsrc
+    for i in range(retries):
+        try:
+            # We send a broadcast ARP request
+            # sending 2 packets in one go increases the chance of a response
+            arp_request = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=target_ip)
+            
+            # srp1 waits for a single response. 
+            # We use a 1.5s timeout per attempt.
+            response = srp1(arp_request, timeout=1.5, iface=iface, verbose=False)
+            
+            if response:
+                return response.hwsrc
+                
+            # If we didn't get a response, wait a tiny bit before the next retry
+            if i < retries - 1:
+                time.sleep(0.5)
+        except:
+            pass
+            
     return None
 
 
@@ -93,6 +108,76 @@ def is_valid_port(port_str):
         return all(0 <= p <= 65535 for p in ports) and (ports[0] <= ports[-1])
     except ValueError:
         return False
+
+def get_friendly_iface_name(scapy_iface_name):
+    """
+    Translates a Scapy interface GUID to a Windows Interface Alias 
+    (the 'Friendly Name' like 'Ethernet 2').
+    """
+    if os.name != 'nt':
+        return scapy_iface_name
+        
+    try:
+        # Use PowerShell to get the mapping between GUID and Alias
+        # This is the most reliable way to get the name netsh/powershell commands want.
+        cmd = ["powershell", "-Command", f"Get-NetAdapter | Where-Object {{$_.InterfaceGuid -eq '{scapy_iface_name}' -or $_.DeviceID -eq '{scapy_iface_name}'}} | Select-Object -ExpandProperty Name"]
+        
+        # If the input was already a friendly name, try to validate it
+        if "{" not in scapy_iface_name:
+             cmd = ["powershell", "-Command", f"Get-NetAdapter | Where-Object {{$_.Name -eq '{scapy_iface_name}'}} | Select-Object -ExpandProperty Name"]
+
+        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+        if output:
+            return output
+            
+        # Fallback to Scapy's list if PowerShell fails
+        from scapy.arch.windows import get_windows_if_list
+        for iface in get_windows_if_list():
+            if iface['name'] == scapy_iface_name:
+                return iface['description']
+    except:
+        pass
+    return scapy_iface_name
+
+def set_static_arp(iface_name, ip, mac):
+    """Sets a static ARP entry to protect the local machine from self-poisoning."""
+    if os.name == 'nt':
+        friendly_name = get_friendly_iface_name(iface_name)
+        try:
+            # We use PowerShell to set a 'Permanent' neighbor entry
+            # First try to create it, then try to update it if it already exists
+            create_cmd = ["powershell", "-Command", f"New-NetNeighbor -InterfaceAlias '{friendly_name}' -IPAddress '{ip}' -LinkLayerAddress '{mac}' -State Permanent -ErrorAction SilentlyContinue"]
+            subprocess.run(create_cmd, capture_output=True)
+            
+            update_cmd = ["powershell", "-Command", f"Set-NetNeighbor -InterfaceAlias '{friendly_name}' -IPAddress '{ip}' -LinkLayerAddress '{mac}' -State Permanent -ErrorAction SilentlyContinue"]
+            subprocess.run(update_cmd, capture_output=True)
+        except:
+            pass
+    else:
+        # Linux/Unix equivalent
+        try:
+            subprocess.run(["ip", "neigh", "replace", ip, "lladdr", mac, "dev", iface_name, "nud", "permanent"],
+                           capture_output=True, check=False)
+        except:
+            pass
+
+def remove_static_arp(iface_name, ip):
+    """Removes a static ARP entry, reverting it to dynamic."""
+    if os.name == 'nt':
+        friendly_name = get_friendly_iface_name(iface_name)
+        try:
+            # Remove the neighbor entry so it reverts to standard dynamic discovery
+            cmd = ["powershell", "-Command", f"Remove-NetNeighbor -InterfaceAlias '{friendly_name}' -IPAddress '{ip}' -Confirm:$false -ErrorAction SilentlyContinue"]
+            subprocess.run(cmd, capture_output=True)
+        except:
+            pass
+    else:
+        # Linux/Unix equivalent
+        try:
+            subprocess.run(["ip", "neigh", "del", ip, "dev", iface_name],
+                           capture_output=True, check=False)
+        except:
+            pass
 
 def is_admin():
     try:

