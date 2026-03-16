@@ -3,6 +3,7 @@ import os
 import ctypes
 import subprocess
 import re
+import platform
 from scapy.all import Ether, ARP, srp1, conf
 
 def get_mac_by_ip(target_ip, iface, retries=3):
@@ -35,10 +36,12 @@ def get_mac_by_ip(target_ip, iface, retries=3):
 def get_gateway(normalized_iface=None):
     """
     Finds the IPv4 gateway IP address.
-    Resilient and cross-compatible (Windows/Linux/WSL).
+    Resilient and cross-compatible (Windows/Linux/WSL/macOS).
     """
+    system = platform.system()
+
     # 1. Windows: Use PowerShell (Very accurate on Win 10/11)
-    if os.name == 'nt':
+    if system == 'Windows':
         try:
             # Get the NextHop of the default route with the lowest metric
             cmd = ["powershell", "-Command", "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1).NextHop"]
@@ -61,7 +64,17 @@ def get_gateway(normalized_iface=None):
         except:
             pass
 
-    # 2. Linux / WSL: Use 'ip route'
+    # 2. macOS: Use 'route -n get default'
+    elif system == 'Darwin':
+        try:
+            output = subprocess.check_output("route -n get default", shell=True, stderr=subprocess.DEVNULL).decode()
+            match = re.search(r"gateway:\s+([\d\.]+)", output)
+            if match:
+                return match.group(1)
+        except:
+            pass
+
+    # 3. Linux / WSL: Use 'ip route'
     else:
         try:
             output = subprocess.check_output("ip route show default", shell=True, stderr=subprocess.DEVNULL).decode()
@@ -71,7 +84,7 @@ def get_gateway(normalized_iface=None):
         except:
             pass
 
-    # 3. Final Fallback: Scapy's internal routing table
+    # 4. Final Fallback: Scapy's internal routing table
     gw = getattr(conf.route, 'gw', None)
     return gw if gw and gw != '0.0.0.0' else None
 
