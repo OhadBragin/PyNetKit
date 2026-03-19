@@ -12,10 +12,10 @@ from rich.table import Table
 from rich.theme import Theme
 from rich.rule import Rule
 
-import models
-import scanner
-import attacks
-from utils import is_valid_ip, is_valid_port, is_admin, get_mac_by_ip, get_gateway, set_static_arp, remove_static_arp
+from . import models
+from . import scanner
+from . import attacks
+from .utils import is_valid_ip, is_valid_port, is_admin, get_mac_by_ip, get_gateway, set_static_arp, remove_static_arp
 
 custom_theme = Theme({
     "info": "#88c0d0",

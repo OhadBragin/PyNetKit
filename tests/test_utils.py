@@ -5,7 +5,7 @@ import os
 # Ensure the root directory is in sys.path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from utils import is_valid_ip, is_valid_port, broad_os_map
+from pynetkit.utils import is_valid_ip, is_valid_port, broad_os_map
 
 def test_is_valid_ip():
     assert is_valid_ip("192.168.1.1") == True

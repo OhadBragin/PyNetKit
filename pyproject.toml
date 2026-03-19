@@ -31,7 +31,7 @@ classifiers = [
 Homepage = "https://github.com/OhadBragin/pynetkit"
 
 [project.scripts]
-pynetkit = "main:main"
+pynetkit = "pynetkit.main:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

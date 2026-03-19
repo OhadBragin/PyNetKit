@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
-from scanner import NetworkScanner
-from models import Host, Port
+from pynetkit.scanner import NetworkScanner
+from pynetkit.models import Host, Port
 from scapy.layers.l2 import ARP
 from scapy.layers.inet import IP, TCP, UDP
 
@@ -9,7 +9,7 @@ class TestNetworkScanner(unittest.TestCase):
     def setUp(self):
         self.scanner = NetworkScanner(ip_range="192.168.1.0/24", port_range=[80, 443], iface="eth0")
 
-    @patch("scanner.srp")
+    @patch("pynetkit.scanner.srp")
     def test_discover_hosts(self, mock_srp):
         # Mocking ARP response
         mock_rcv = MagicMock()
@@ -26,8 +26,8 @@ class TestNetworkScanner(unittest.TestCase):
         self.assertEqual(self.scanner.hosts[0].ip_address, "192.168.1.5")
         self.assertEqual(self.scanner.hosts[0].mac_address, "00:11:22:33:44:55")
 
-    @patch("scanner.srp")
-    @patch("scanner.broad_os_map")
+    @patch("pynetkit.scanner.srp")
+    @patch("pynetkit.scanner.broad_os_map")
     def test_scan_ports(self, mock_os_map, mock_srp):
         host = Host(ip_address="192.168.1.5", mac_address="00:11:22:33:44:55")
         mock_os_map.return_value = "Linux"

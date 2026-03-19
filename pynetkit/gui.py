@@ -6,10 +6,10 @@ from tkinter import messagebox
 from scapy.interfaces import get_working_ifaces
 from scapy.all import conf
 
-from scanner import NetworkScanner, TraceScanner
-from attacks import ArpPoisoning, DHCPStarvation, SingleTargetDos
-from utils import get_gateway, get_mac_by_ip, is_valid_ip
-import models
+from .scanner import NetworkScanner, TraceScanner
+from .attacks import ArpPoisoning, DHCPStarvation, SingleTargetDos
+from .utils import get_gateway, get_mac_by_ip, is_valid_ip
+from . import models
 
 
 class NetworkMapperGUI(tb.Window):

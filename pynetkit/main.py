@@ -1,7 +1,7 @@
 import sys
 import argparse
-from utils import is_admin
-import cli
+from .utils import is_admin
+from . import cli
 
 
 def main() -> None:
@@ -22,7 +22,7 @@ def main() -> None:
 
     if args.gui:
         try:
-            import gui
+            from . import gui
             print("Starting GUI...")
             gui_app = gui.NetworkMapperGUI()
             gui_app.mainloop()

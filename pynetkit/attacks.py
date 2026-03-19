@@ -10,8 +10,8 @@ from scapy.layers.l2 import ARP, Ether
 from scapy.layers.dhcp import BOOTP, DHCP
 from scapy.utils import mac2str
 
-import models
-from utils import get_mac_by_ip, get_gateway
+from . import models
+from .utils import get_mac_by_ip, get_gateway
 
 
 class ArpPoisoning:
@@ -63,7 +63,7 @@ class ArpPoisoning:
                 print(f"Error initializing packet capture: {e}")
                 self.do_save = False
 
-    def poison_tabels(self) -> None:
+    def poison_tables(self) -> None:
         """
         Sends spoofed ARP replies to both the target and the gateway,
         putting the attacker's machine in the middle of their communication.
@@ -218,7 +218,7 @@ class ArpPoisoning:
         """
         try:
             while self.is_running:
-                self.poison_tabels()
+                self.poison_tables()
                 time.sleep(2)
         except KeyboardInterrupt:
             print("Restoring ARP tables...")

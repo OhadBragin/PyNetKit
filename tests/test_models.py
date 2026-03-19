@@ -5,7 +5,7 @@ import os
 # Ensure the root directory is in sys.path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from models import Host, Port
+from pynetkit.models import Host, Port
 
 def test_port_init():
     port = Port(80, "Open", "HTTP", "TCP")

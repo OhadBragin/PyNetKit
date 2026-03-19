@@ -7,8 +7,8 @@ import logging
 # Suppress scapy runtime warnings (e.g. "MAC address to reach destination not found")
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 
-import models
-from utils import broad_os_map
+from . import models
+from .utils import broad_os_map
 
 
 class NetworkScanner:
