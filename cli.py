@@ -1,22 +1,21 @@
 import sys
+import argparse
+import time
+from typing import Optional, List, Any, Union
 
 from scapy.config import conf
 from scapy.interfaces import get_working_ifaces
-from scapy.layers.l2 import getmacbyip
-import models
-import scanner
-import attacks
-from utils import is_valid_ip, is_valid_port, is_admin, get_mac_by_ip, get_gateway, set_static_arp, remove_static_arp
-import time
-import argparse
 from rich_argparse import RawTextRichHelpFormatter
-
-
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.theme import Theme
 from rich.rule import Rule
+
+import models
+import scanner
+import attacks
+from utils import is_valid_ip, is_valid_port, is_admin, get_mac_by_ip, get_gateway, set_static_arp, remove_static_arp
 
 custom_theme = Theme({
     "info": "#88c0d0",
@@ -40,31 +39,47 @@ RawTextRichHelpFormatter.styles["argparse.args"] = "#a3be8c"
 RawTextRichHelpFormatter.styles["argparse.metavar"] = "bold #b48ead"
 RawTextRichHelpFormatter.styles["argparse.help"] = "#e5e9f0"
 
-def print_error_panel(msg):
+
+def print_error_panel(msg: str) -> None:
+    """
+    Prints an error message inside a Rich panel.
+    :param msg: The error message to display
+    :return: None
+    """
     console.print()
     console.print(Panel(
         f"[muted]{msg}[/]",
         title="[error]Error[/]",
         border_style="#bf616a",
-        expand=False
+        expand=True
     ))
 
-def print_warning_panel(msg, title="Warning"):
+
+def print_warning_panel(msg: str, title: str = "Warning") -> None:
+    """
+    Prints a warning message inside a Rich panel.
+    :param msg: The warning message to display
+    :param title: The title of the panel
+    :return: None
+    """
     console.print()
     console.print(Panel(
         f"[muted]{msg}[/]",
         title=f"[warning]{title}[/]",
         border_style="warning",
-        expand=False
+        expand=True
     ))
 
-def resolve_iface(iface_arg):
+
+def resolve_iface(iface_arg: Optional[str]) -> str:
     """
     Validate and normalize a user-supplied interface argument.
     - If an interface is supplied, try to match it by description or name.
       On success, return the normalized name.
       On failure, print a helpful error + available interfaces and exit.
     - If no interface is supplied, warn and return scapy's default.
+    :param iface_arg: Optional user-supplied interface name or description
+    :return: Normalized interface name
     """
     if iface_arg:
         available_ifaces = get_working_ifaces()
@@ -98,7 +113,15 @@ def resolve_iface(iface_arg):
         return conf.iface.name
     return str(conf.iface)
 
-def run_host_scan(*, ip_range, iface, port_range=None):
+
+def run_host_scan(*, ip_range: str, iface: str, port_range: Optional[Union[str, int, List[int]]] = None) -> None:
+    """
+    Runs a network host discovery scan and optionally a port scan.
+    :param ip_range: The IP range to scan
+    :param iface: The network interface to use
+    :param port_range: Optional port range to scan for each host
+    :return: None
+    """
     console.print()
     console.print(Rule(title=f"[info_bold]Starting Network Mapper scan on {ip_range}...[/]", style="border"))
     app = scanner.NetworkScanner(ip_range=ip_range, port_range=port_range, iface=iface)
@@ -153,7 +176,7 @@ def run_host_scan(*, ip_range, iface, port_range=None):
             title=f"[info_bold]{host.ip_address}[/] - [muted_light]{host.mac_address}[/]",
             title_align="center",
             border_style="border",
-            expand=False
+            expand=True
         )
         console.print(panel)
         console.print()
@@ -161,7 +184,17 @@ def run_host_scan(*, ip_range, iface, port_range=None):
     console.print(Rule(title="[info_bold]Scan complete.[/]", style="border"))
     console.print()
 
-def arp_spoof(*, target_ip, iface, do_save=False, dns_domain=None, dns_ip=None):
+
+def arp_spoof(*, target_ip: str, iface: str, do_save: bool = False, dns_domain: Optional[str] = None, dns_ip: Optional[str] = None) -> None:
+    """
+    Runs an ARP spoofing attack.
+    :param target_ip: Victim IP address
+    :param iface: Network interface to use
+    :param do_save: Whether to save captured packets to a pcap file
+    :param dns_domain: Optional domain to spoof
+    :param dns_ip: Optional IP address to use for DNS spoofing
+    :return: None
+    """
     console.print()
     console.print(Rule(title="[info_bold]Starting ARP Spoofing Attack...[/]", style="border"))
     
@@ -201,7 +234,7 @@ def arp_spoof(*, target_ip, iface, do_save=False, dns_domain=None, dns_ip=None):
         title="[warning]Poisoning Targets[/]",
         title_align="center",
         border_style="warning",
-        expand=False
+        expand=True
     )
     console.print(panel)
     
@@ -232,7 +265,14 @@ def arp_spoof(*, target_ip, iface, do_save=False, dns_domain=None, dns_ip=None):
     console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
     console.print()
 
-def run_single_dos(*, target_ip, iface):
+
+def run_single_dos(*, target_ip: str, iface: str) -> None:
+    """
+    Runs a Denial of Service attack against a single target.
+    :param target_ip: Target IP address
+    :param iface: Network interface to use
+    :return: None
+    """
     console.print()
     console.print(Rule(title="[info_bold]Starting Single Target DoS Attack...[/]", style="border"))
     
@@ -291,7 +331,13 @@ def run_single_dos(*, target_ip, iface):
         console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
         console.print()
 
-def run_dhcp_dos(*, iface):
+
+def run_dhcp_dos(*, iface: str) -> None:
+    """
+    Runs a DHCP starvation DoS attack.
+    :param iface: Network interface to use
+    :return: None
+    """
     console.print()
     console.print(Rule(title="[info_bold]Starting DHCP DoS Attack...[/]", style="border"))
     dos_attack = attacks.DHCPStarvation(iface=iface)
@@ -309,7 +355,14 @@ def run_dhcp_dos(*, iface):
     console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
     console.print()
 
-def trace_scan(*, target, max_hops=30):
+
+def trace_scan(*, target: str, max_hops: int = 30) -> None:
+    """
+    Runs a traceroute to a target hostname or IP.
+    :param target: Target hostname or IP
+    :param max_hops: Maximum number of hops to trace
+    :return: None
+    """
     target_ip = target
     if not is_valid_ip(target):
         with console.status(f"[muted]Resolving hostname '{target}'...[/]"):
@@ -350,7 +403,7 @@ def trace_scan(*, target, max_hops=30):
         title=f"[info_bold]Trace Route Complete[/] - {len(app.path)} hops",
         title_align="center",
         border_style="border",
-        expand=False
+        expand=True
     )
     console.print(panel)
     
@@ -362,27 +415,52 @@ def trace_scan(*, target, max_hops=30):
     console.print(Rule(style="border"))
     console.print()
 
+
 class RichArgumentParser(argparse.ArgumentParser):
-    def error(self, message):
-        """Override default error method to print inside a Rich panel."""
-        import re
-        usage = self.format_usage()
-        # Collapse newlines and extra spaces in usage to prevent breaking the Panel frame
-        usage_clean = re.sub(r'\s+', ' ', usage).strip()
-        
-        err_msg = f"[muted]{message}[/]\n\n[muted_light]{usage_clean}[/]"
-        
+    """
+    Custom ArgumentParser that uses Rich to display errors and help messages.
+    """
+
+    def error(self, message: str) -> None:
+        """
+        Override default error method to print inside a Rich panel.
+        :param message: The error message
+        :return: None
+        """
+        from rich.text import Text
+        from rich.console import Group
+
+        # 1. Get the raw usage string (contains hidden ANSI codes)
+        usage_raw = self.format_usage()
+
+        # 2. Parse the ANSI codes so Rich calculates the exact visual width correctly
+        usage_text = Text.from_ansi(usage_raw) if "\x1b" in usage_raw else Text(usage_raw)
+
+        # 3. Clean up the trailing newline argparse leaves behind
+        usage_text.rstrip()
+
+        # 4. Group the error message and the formatted usage
+        err_content = Group(
+            Text(message, style="muted"),
+            Text(""),  # Vertical spacer
+            usage_text
+        )
+
         console.print()
         console.print(Panel(
-            err_msg,
+            err_content,
             title="[error]Argument Error[/]",
             border_style="#bf616a",
             expand=False
         ))
         sys.exit(2)
 
-    def print_help(self, file=None):
-        """Override default print_help to wrap the rich-argparse output in a Panel."""
+    def print_help(self, file: Optional[Any] = None) -> None:
+        """
+        Override default print_help to wrap the rich-argparse output in a Panel.
+        :param file: Optional file stream
+        :return: None
+        """
         from rich.text import Text
         help_text = self.format_help()
         
@@ -391,10 +469,11 @@ class RichArgumentParser(argparse.ArgumentParser):
             Text.from_ansi(help_text) if "\x1b" in help_text else help_text,
             title="[info_bold]Help & Usage[/]",
             border_style="#81a1c1",
-            expand=False
+            expand=True
         ))
 
-def get_args():
+
+def get_args() -> argparse.Namespace:
     """
     parses and validates command-line args.
 
@@ -524,9 +603,9 @@ def get_args():
                 sys.exit(1)
             else:
                 if "-" in args.range:
-                    start, end = args.range.split("-")
+                    start_port, end_port = args.range.split("-")
                     # convert port range to list
-                    args.range = list(range(int(start), int(end) + 1))
+                    args.range = list(range(int(start_port), int(end_port) + 1))
                 else:
                     # handle single port
                     args.range = int(args.range)
@@ -572,9 +651,17 @@ def get_args():
 
     return args
 
-def main():
+
+def main() -> None:
+    """
+    The entry point of the CLI application.
+    :return: None
+    """
     args = get_args()
-    if args.command == "SCAN":
+    if args.gui:
+        # GUI logic would go here if not handled elsewhere
+        pass
+    elif args.command == "SCAN":
         if args.port:
             run_host_scan(ip_range=args.target, iface=args.iface, port_range=args.range)
         else:
@@ -594,6 +681,7 @@ def main():
             run_dhcp_dos(iface=args.iface)
     elif args.command == "TRACE":
         trace_scan(target=args.target, max_hops=args.max_hops)
+
 
 if __name__ == "__main__":
     main()

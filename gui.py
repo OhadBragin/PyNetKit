@@ -1,7 +1,8 @@
+import threading
+from typing import Optional, List, Any, Dict, Union, Tuple
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 from tkinter import messagebox
-import threading
 from scapy.interfaces import get_working_ifaces
 from scapy.all import conf
 
@@ -10,22 +11,31 @@ from attacks import ArpPoisoning, DHCPStarvation, SingleTargetDos
 from utils import get_gateway, get_mac_by_ip, is_valid_ip
 import models
 
+
 class NetworkMapperGUI(tb.Window):
-    def __init__(self):
+    """
+    Graphical User Interface for the Network Mapper Tool.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initializes the GUI window and its components.
+        :return: None
+        """
         super().__init__(themename="darkly") # Clean, professional dark mode
         self.title("PyNetKit")
         self.geometry("1000x800") # More responsive default size
         
-        self.interfaces = {}
+        self.interfaces: Dict[str, str] = {}
         self.populate_interfaces()
         
-        self.active_host = None # Keep track of selected host
-        self.ports_need_refresh = False # Optimization for tab loading
+        self.active_host: Optional[models.Host] = None # Keep track of selected host
+        self.ports_need_refresh: bool = False # Optimization for tab loading
         
         # Global attacks variables
-        self.arp_attack = None
-        self.st_dos_attack = None
-        self.dhcp_attack = None
+        self.arp_attack: Optional[ArpPoisoning] = None
+        self.st_dos_attack: Optional[SingleTargetDos] = None
+        self.dhcp_attack: Optional[DHCPStarvation] = None
         
         self.setup_ui()
         self.select_default_interface()
@@ -34,14 +44,22 @@ class NetworkMapperGUI(tb.Window):
         self.update_idletasks()
         self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
         
-    def populate_interfaces(self):
+    def populate_interfaces(self) -> None:
+        """
+        Populates the internal interface mapping by scanning available network interfaces.
+        :return: None
+        """
         for iface in get_working_ifaces():
             friendly_name = iface.description if iface.description else iface.name
             if friendly_name in self.interfaces:
                 friendly_name = f"{friendly_name} ({iface.name})"
             self.interfaces[friendly_name] = iface.name
             
-    def select_default_interface(self):
+    def select_default_interface(self) -> None:
+        """
+        Selects Scapy's default interface in the interface selection dropdown.
+        :return: None
+        """
         default_iface_name = str(conf.iface)
         for friendly, real in self.interfaces.items():
             if real == default_iface_name:
@@ -51,7 +69,11 @@ class NetworkMapperGUI(tb.Window):
             if self.interfaces:
                 self.iface_combo.current(0)
             
-    def setup_ui(self):
+    def setup_ui(self) -> None:
+        """
+        Sets up the main UI layout using a PanedWindow.
+        :return: None
+        """
         # Create a PanedWindow to split top and bottom halves
         self.paned_window = tb.Panedwindow(self, orient=VERTICAL)
         self.paned_window.pack(fill=BOTH, expand=True, padx=10, pady=10)
@@ -93,7 +115,11 @@ class NetworkMapperGUI(tb.Window):
         self.setup_dos_ui()
         self.setup_trace_ui()
         
-    def setup_master_view(self):
+    def setup_master_view(self) -> None:
+        """
+        Sets up the top frame containing scan controls and the host table.
+        :return: None
+        """
         # Controls Frame
         controls_frame = tb.Frame(self.top_frame)
         controls_frame.pack(fill=X, pady=(0, 10))
@@ -155,22 +181,35 @@ class NetworkMapperGUI(tb.Window):
         # Bind row selection
         self.host_tree.bind("<<TreeviewSelect>>", self.on_host_selected)
         
-        self.discovered_hosts = [] # Store host objects
+        self.discovered_hosts: List[models.Host] = [] # Store host objects
 
-    def toggle_port_range_ui(self):
+    def toggle_port_range_ui(self) -> None:
+        """
+        Toggles the visibility of the port range input based on the port scan checkbox.
+        :return: None
+        """
         if self.scan_ports_var.get():
             self.port_range_frame.grid()
         else:
             self.port_range_frame.grid_remove()
 
-    def on_iface_changed(self, event=None):
+    def on_iface_changed(self, event: Optional[Any] = None) -> None:
+        """
+        Callback triggered when the network interface selection changes.
+        :param event: Optional event object
+        :return: None
+        """
         # Attempt to auto-update gateway IP on interface switch
         gw = get_gateway()
         if gw and hasattr(self, 'gw_ip_entry'):
             self.gw_ip_entry.delete(0, END)
             self.gw_ip_entry.insert(0, gw)
 
-    def start_host_scan(self):
+    def start_host_scan(self) -> None:
+        """
+        Starts the network host discovery scan process.
+        :return: None
+        """
         friendly_iface = self.iface_combo.get()
         if not friendly_iface:
             messagebox.showerror("Error", "Please select an interface.")
@@ -205,9 +244,17 @@ class NetworkMapperGUI(tb.Window):
         
         threading.Thread(target=self.run_scan, args=(real_iface, ip_range, do_port_scan, port_range), daemon=True).start()
         
-    def run_scan(self, iface, ip_range, do_port_scan, port_range):
+    def run_scan(self, iface: str, ip_range: str, do_port_scan: bool, port_range: Optional[str]) -> None:
+        """
+        Executes the network scan in a background thread.
+        :param iface: The network interface to use
+        :param ip_range: The IP range to scan
+        :param do_port_scan: Whether to perform a port scan
+        :param port_range: The port range string to scan
+        :return: None
+        """
         try:
-            port_r = None
+            port_r: Optional[Union[int, Tuple[int, int]]] = None
             if do_port_scan and port_range:
                 if '-' in port_range:
                     start, end = map(int, port_range.split('-'))
@@ -215,18 +262,23 @@ class NetworkMapperGUI(tb.Window):
                 else:
                     port_r = int(port_range)
                     
-            scanner = NetworkScanner(ip_range=ip_range, port_range=port_r, iface=iface)
-            scanner.discover_hosts()
+            scanner_obj = NetworkScanner(ip_range=ip_range, port_range=port_r, iface=iface)
+            scanner_obj.discover_hosts()
             
             if do_port_scan and port_r is not None:
-                for host in scanner.hosts:
-                    scanner.scan_ports(host)
+                for host in scanner_obj.hosts:
+                    scanner_obj.scan_ports(host)
                     
-            self.after(0, self.on_scan_complete, scanner.hosts)
+            self.after(0, self.on_scan_complete, scanner_obj.hosts)
         except Exception as e:
             self.after(0, self.on_scan_error, str(e))
             
-    def on_scan_complete(self, hosts):
+    def on_scan_complete(self, hosts: List[models.Host]) -> None:
+        """
+        Callback triggered when the network scan is finished.
+        :param hosts: List of discovered Host objects
+        :return: None
+        """
         self.scan_progress.stop()
         self.scan_progress.pack_forget()
         self.scan_btn.config(state=NORMAL, text="Start Scan")
@@ -243,13 +295,23 @@ class NetworkMapperGUI(tb.Window):
             
             self.host_tree.insert("", END, iid=str(i), values=(host.ip_address, host.mac_address, os_guess, port_summary))
 
-    def on_scan_error(self, err_msg):
+    def on_scan_error(self, err_msg: str) -> None:
+        """
+        Callback triggered if an error occurs during the network scan.
+        :param err_msg: The error message
+        :return: None
+        """
         self.scan_progress.stop()
         self.scan_progress.pack_forget()
         self.scan_btn.config(state=NORMAL, text="Start Scan")
         messagebox.showerror("Scan Error", f"An error occurred during scan:\n{err_msg}")
 
-    def on_host_selected(self, event):
+    def on_host_selected(self, event: Any) -> None:
+        """
+        Callback triggered when a host is selected in the host table.
+        :param event: The selection event
+        :return: None
+        """
         selected_items = self.host_tree.selection()
         if not selected_items:
             return
@@ -276,18 +338,31 @@ class NetworkMapperGUI(tb.Window):
         self.trace_target_entry.delete(0, END)
         self.trace_target_entry.insert(0, self.active_host.ip_address)
 
-    def on_tab_changed(self, event=None):
+    def on_tab_changed(self, event: Optional[Any] = None) -> None:
+        """
+        Callback triggered when the active tab in the detail notebook changes.
+        :param event: Optional event object
+        :return: None
+        """
         if self.is_ports_tab_visible() and self.ports_need_refresh:
             self.refresh_ports_tab()
 
-    def is_ports_tab_visible(self):
+    def is_ports_tab_visible(self) -> bool:
+        """
+        Checks if the Port Scanner tab is currently selected.
+        :return: True if visible, False otherwise
+        """
         try:
             return self.detail_notebook.tab(self.detail_notebook.select(), "text") == "Port Scanner"
         except:
             return False
 
     # --- PORT SCANNER UI ---
-    def setup_ports_ui(self):
+    def setup_ports_ui(self) -> None:
+        """
+        Sets up the UI components for the Port Scanner tab.
+        :return: None
+        """
         top_frame = tb.Frame(self.ports_tab)
         top_frame.pack(fill=X, pady=(0, 15))
         
@@ -326,7 +401,11 @@ class NetworkMapperGUI(tb.Window):
         self.port_tree.pack(side=LEFT, fill=BOTH, expand=True)
         scroll.pack(side=RIGHT, fill=Y)
 
-    def refresh_ports_tab(self):
+    def refresh_ports_tab(self) -> None:
+        """
+        Refreshes the port results table based on active filters.
+        :return: None
+        """
         if not self.active_host:
             return
             
@@ -359,9 +438,13 @@ class NetworkMapperGUI(tb.Window):
                 elif filter_status not in port_status_lower:
                     continue
                 
-            self.port_tree.insert("", END, values=(port.port_number, port.proto.upper(), port.status, port.service))
+            self.port_tree.insert("", END, values=(port.port_number, port.proto.upper() if port.proto else "N/A", port.status, port.service))
                 
-    def scan_target_ports(self):
+    def scan_target_ports(self) -> None:
+        """
+        Initiates a port scan on the currently selected host.
+        :return: None
+        """
         if not self.active_host: return
         
         port_range_str = self.detail_port_entry.get().strip()
@@ -387,15 +470,27 @@ class NetworkMapperGUI(tb.Window):
         
         threading.Thread(target=self._run_target_port_scan, args=(port_range, real_iface), daemon=True).start()
         
-    def _run_target_port_scan(self, port_range, iface):
+    def _run_target_port_scan(self, port_range: Union[int, Tuple[int, int]], iface: str) -> None:
+        """
+        Background task to perform the port scan on a specific host.
+        :param port_range: The port range to scan
+        :param iface: The network interface to use
+        :return: None
+        """
         try:
-            scanner = NetworkScanner(ip_range=self.active_host.ip_address, port_range=port_range, iface=iface)
-            scanner.scan_ports(self.active_host)
+            if self.active_host is None:
+                return
+            scanner_obj = NetworkScanner(ip_range=self.active_host.ip_address, port_range=port_range, iface=iface)
+            scanner_obj.scan_ports(self.active_host)
             self.after(0, self._on_target_port_scan_complete)
         except Exception as e:
             self.after(0, self._on_target_port_scan_error, str(e))
             
-    def _on_target_port_scan_complete(self):
+    def _on_target_port_scan_complete(self) -> None:
+        """
+        Callback triggered when a host-specific port scan is finished.
+        :return: None
+        """
         self.port_progress.stop()
         self.port_progress.pack_forget()
         self.target_scan_btn.config(state=NORMAL, text="Scan Target Ports")
@@ -414,18 +509,26 @@ class NetworkMapperGUI(tb.Window):
                          self.host_tree.set(item, column="os", value=self.active_host.os)
                     break
 
-        if not self.active_host.ports:
+        if self.active_host and not self.active_host.ports:
             messagebox.showinfo("Scan Complete", "No open ports found.")
 
-            
-    def _on_target_port_scan_error(self, err):
+    def _on_target_port_scan_error(self, err: str) -> None:
+        """
+        Callback triggered if an error occurs during a host-specific port scan.
+        :param err: The error message
+        :return: None
+        """
         self.port_progress.stop()
         self.port_progress.pack_forget()
         self.target_scan_btn.config(state=NORMAL, text="Scan Target Ports")
         messagebox.showerror("Error", err)
 
     # --- ARP POISONING UI ---
-    def setup_arp_ui(self):
+    def setup_arp_ui(self) -> None:
+        """
+        Sets up the UI components for the ARP Poisoning tab.
+        :return: None
+        """
         input_frame = tb.Frame(self.arp_tab)
         input_frame.pack(fill=X, pady=(0, 15))
         
@@ -466,13 +569,21 @@ class NetworkMapperGUI(tb.Window):
         self.arp_status_lbl = tb.Label(self.arp_tab, text="Status: Ready", font=("Helvetica", 11, "bold"), bootstyle=SUCCESS)
         self.arp_status_lbl.pack(anchor=W, pady=15)
 
-    def toggle_dns_spoof(self):
+    def toggle_dns_spoof(self) -> None:
+        """
+        Toggles the visibility of DNS spoofing input fields.
+        :return: None
+        """
         if self.dns_spoof_var.get():
             self.dns_frame.pack(fill=X, pady=(15, 0))
         else:
             self.dns_frame.pack_forget()
 
-    def start_arp_attack(self):
+    def start_arp_attack(self) -> None:
+        """
+        Initiates the ARP poisoning attack.
+        :return: None
+        """
         if self.arp_attack and self.arp_attack.is_running:
             messagebox.showerror("Error", "An ARP attack is already running. Please stop it before starting a new one.")
             return
@@ -500,7 +611,16 @@ class NetworkMapperGUI(tb.Window):
         
         threading.Thread(target=self._init_and_start_arp, args=(gw_ip, real_iface, do_save, redirect_to, orig_domain), daemon=True).start()
 
-    def _init_and_start_arp(self, gw_ip, iface, do_save, redirect_to, orig_domain):
+    def _init_and_start_arp(self, gw_ip: str, iface: str, do_save: bool, redirect_to: Optional[str], orig_domain: Optional[str]) -> None:
+        """
+        Background task to resolve addresses and start the ARP poisoning attack.
+        :param gw_ip: Gateway IP address
+        :param iface: Network interface to use
+        :param do_save: Whether to save pcap
+        :param redirect_to: Optional redirect target for DNS spoofing
+        :param orig_domain: Optional domain to spoof
+        :return: None
+        """
         try:
             spoofed_ip = None
             if redirect_to:
@@ -519,6 +639,8 @@ class NetworkMapperGUI(tb.Window):
                 return
                 
             gateway = models.Host(ip_address=gw_ip, mac_address=gw_mac)
+            if self.active_host is None:
+                return
             self.arp_attack = ArpPoisoning(self.active_host, gateway, iface, do_save, spoofed_ip, orig_domain)
             self.arp_attack.start()
             
@@ -526,34 +648,61 @@ class NetworkMapperGUI(tb.Window):
         except Exception as e:
             self.after(0, self._on_arp_error, str(e))
             
-    def _on_arp_started(self):
+    def _on_arp_started(self) -> None:
+        """
+        Callback triggered when the ARP attack has successfully started.
+        :return: None
+        """
         self.arp_stop_btn.config(state=NORMAL)
-        self.arp_status_lbl.config(text=f"Status: Active on {self.active_host.ip_address}", bootstyle=DANGER)
+        if self.active_host:
+            self.arp_status_lbl.config(text=f"Status: Active on {self.active_host.ip_address}", bootstyle=DANGER)
         
-    def _on_arp_error(self, err):
+    def _on_arp_error(self, err: str) -> None:
+        """
+        Callback triggered if an error occurs while starting the ARP attack.
+        :param err: The error message
+        :return: None
+        """
         self.arp_start_btn.config(state=NORMAL)
         self.arp_status_lbl.config(text=f"Status: Error - {err}", bootstyle=DANGER)
         
-    def stop_arp_attack(self):
+    def stop_arp_attack(self) -> None:
+        """
+        Initiates the process to stop the active ARP attack.
+        :return: None
+        """
         if self.arp_attack:
             self.arp_stop_btn.config(state=DISABLED)
             self.arp_status_lbl.config(text="Status: Stopping & Restoring Tables...", bootstyle=WARNING)
             threading.Thread(target=self._stop_arp_thread, daemon=True).start()
             
-    def _stop_arp_thread(self):
+    def _stop_arp_thread(self) -> None:
+        """
+        Background task to stop the ARP attack and restore tables.
+        :return: None
+        """
         try:
-            self.arp_attack.stop()
+            if self.arp_attack:
+                self.arp_attack.stop()
         except Exception:
             pass
         self.after(0, self._on_arp_stopped)
         
-    def _on_arp_stopped(self):
+    def _on_arp_stopped(self) -> None:
+        """
+        Callback triggered when the ARP attack has successfully stopped.
+        :return: None
+        """
         self.arp_attack = None
         self.arp_start_btn.config(state=NORMAL)
         self.arp_status_lbl.config(text="Status: Stopped & Restored", bootstyle=SUCCESS)
 
     # --- DOS UI ---
-    def setup_dos_ui(self):
+    def setup_dos_ui(self) -> None:
+        """
+        Sets up the UI components for the Denial of Service tab.
+        :return: None
+        """
         st_frame = tb.Labelframe(self.dos_tab, text="Single Target DoS (ARP Blackhole)", padding="15", bootstyle=DANGER)
         st_frame.pack(fill=X, pady=(0, 20))
         tb.Label(st_frame, text="Cuts off the active target from the gateway by poisoning both with dummy MACs.").pack(anchor=W, pady=(0, 15))
@@ -584,7 +733,11 @@ class NetworkMapperGUI(tb.Window):
         self.dhcp_status_lbl = tb.Label(dhcp_frame, text="Status: Ready", bootstyle=SUCCESS, font=("Helvetica", 10, "bold"))
         self.dhcp_status_lbl.pack(anchor=W, pady=(10, 0))
 
-    def start_st_dos(self):
+    def start_st_dos(self) -> None:
+        """
+        Initiates the single target DoS attack.
+        :return: None
+        """
         if self.st_dos_attack and self.st_dos_attack.is_running:
             messagebox.showerror("Error", "A Single Target DoS attack is already running. Please stop it first.")
             return
@@ -603,11 +756,19 @@ class NetworkMapperGUI(tb.Window):
         
         threading.Thread(target=self._init_st_dos, args=(gw_ip, real_iface), daemon=True).start()
         
-    def _init_st_dos(self, gw_ip, iface):
+    def _init_st_dos(self, gw_ip: str, iface: str) -> None:
+        """
+        Background task to resolve addresses and start the single target DoS attack.
+        :param gw_ip: Gateway IP address
+        :param iface: Network interface to use
+        :return: None
+        """
         try:
             gw_mac = get_mac_by_ip(gw_ip, iface)
             if not gw_mac:
                 self.after(0, self._on_st_dos_error, "Could not resolve Gateway MAC.")
+                return
+            if self.active_host is None:
                 return
             self.st_dos_attack = SingleTargetDos(self.active_host, gw_ip, gw_mac, iface)
             self.st_dos_attack.start()
@@ -615,30 +776,57 @@ class NetworkMapperGUI(tb.Window):
         except Exception as e:
             self.after(0, self._on_st_dos_error, str(e))
             
-    def _on_st_dos_started(self):
+    def _on_st_dos_started(self) -> None:
+        """
+        Callback triggered when the single target DoS attack has started.
+        :return: None
+        """
         self.st_dos_stop_btn.config(state=NORMAL)
-        self.st_dos_status_lbl.config(text=f"Status: Active on {self.active_host.ip_address}", bootstyle=DANGER)
+        if self.active_host:
+            self.st_dos_status_lbl.config(text=f"Status: Active on {self.active_host.ip_address}", bootstyle=DANGER)
         
-    def _on_st_dos_error(self, err):
+    def _on_st_dos_error(self, err: str) -> None:
+        """
+        Callback triggered if an error occurs while starting the DoS attack.
+        :param err: The error message
+        :return: None
+        """
         self.st_dos_start_btn.config(state=NORMAL)
         self.st_dos_status_lbl.config(text=f"Status: Error - {err}", bootstyle=DANGER)
         
-    def stop_st_dos(self):
+    def stop_st_dos(self) -> None:
+        """
+        Initiates the process to stop the active single target DoS attack.
+        :return: None
+        """
         if self.st_dos_attack:
             self.st_dos_stop_btn.config(state=DISABLED)
             self.st_dos_status_lbl.config(text="Status: Stopping...", bootstyle=WARNING)
             threading.Thread(target=self._stop_st_dos_thread, daemon=True).start()
             
-    def _stop_st_dos_thread(self):
-        self.st_dos_attack.stop()
+    def _stop_st_dos_thread(self) -> None:
+        """
+        Background task to stop the DoS attack.
+        :return: None
+        """
+        if self.st_dos_attack:
+            self.st_dos_attack.stop()
         self.after(0, self._on_st_dos_stopped)
         
-    def _on_st_dos_stopped(self):
+    def _on_st_dos_stopped(self) -> None:
+        """
+        Callback triggered when the DoS attack has stopped.
+        :return: None
+        """
         self.st_dos_attack = None
         self.st_dos_start_btn.config(state=NORMAL)
         self.st_dos_status_lbl.config(text="Status: Stopped", bootstyle=SUCCESS)
 
-    def start_dhcp(self):
+    def start_dhcp(self) -> None:
+        """
+        Starts the DHCP starvation attack.
+        :return: None
+        """
         if self.dhcp_attack and self.dhcp_attack.is_running:
             return
 
@@ -652,23 +840,40 @@ class NetworkMapperGUI(tb.Window):
         self.dhcp_attack = DHCPStarvation(iface=real_iface)
         self.dhcp_attack.start()
         
-    def stop_dhcp(self):
+    def stop_dhcp(self) -> None:
+        """
+        Initiates the process to stop the DHCP starvation attack.
+        :return: None
+        """
         if self.dhcp_attack:
             self.dhcp_stop_btn.config(state=DISABLED)
             self.dhcp_status_lbl.config(text="Status: Stopping...", bootstyle=WARNING)
             threading.Thread(target=self._stop_dhcp_thread, daemon=True).start()
             
-    def _stop_dhcp_thread(self):
-        self.dhcp_attack.stop()
+    def _stop_dhcp_thread(self) -> None:
+        """
+        Background task to stop the DHCP starvation attack.
+        :return: None
+        """
+        if self.dhcp_attack:
+            self.dhcp_attack.stop()
         self.after(0, self._on_dhcp_stopped)
         
-    def _on_dhcp_stopped(self):
+    def _on_dhcp_stopped(self) -> None:
+        """
+        Callback triggered when the DHCP starvation attack has stopped.
+        :return: None
+        """
         self.dhcp_attack = None
         self.dhcp_start_btn.config(state=NORMAL)
         self.dhcp_status_lbl.config(text="Status: Stopped", bootstyle=SUCCESS)
 
     # --- GLOBAL TRACEROUTE UI ---
-    def setup_trace_ui(self):
+    def setup_trace_ui(self) -> None:
+        """
+        Sets up the UI components for the Traceroute tab.
+        :return: None
+        """
         top_frame = tb.Frame(self.trace_tab)
         top_frame.pack(fill=X, pady=(0, 15))
         
@@ -703,7 +908,11 @@ class NetworkMapperGUI(tb.Window):
         self.trace_tree.pack(side=LEFT, fill=BOTH, expand=True)
         scroll.pack(side=RIGHT, fill=Y)
 
-    def start_trace(self):
+    def start_trace(self) -> None:
+        """
+        Initiates the traceroute process.
+        :return: None
+        """
         target = self.trace_target_entry.get().strip()
         if not target:
             messagebox.showerror("Error", "Target cannot be empty.")
@@ -724,7 +933,13 @@ class NetworkMapperGUI(tb.Window):
             
         threading.Thread(target=self._run_trace, args=(target, max_hops), daemon=True).start()
         
-    def _run_trace(self, target, max_hops):
+    def _run_trace(self, target: str, max_hops: int) -> None:
+        """
+        Background task to execute the traceroute.
+        :param target: The target IP or hostname
+        :param max_hops: Maximum number of hops
+        :return: None
+        """
         try:
             target_ip = target
             if not is_valid_ip(target):
@@ -734,13 +949,18 @@ class NetworkMapperGUI(tb.Window):
                     return
                 target_ip = resolved_ip
                 
-            scanner = TraceScanner(target_ip=target_ip, max_hops=max_hops)
-            scanner.start()
-            self.after(0, self._on_trace_complete, scanner.path)
+            scanner_obj = TraceScanner(target_ip=target_ip, max_hops=max_hops)
+            scanner_obj.start()
+            self.after(0, self._on_trace_complete, scanner_obj.path)
         except Exception as e:
             self.after(0, self._on_trace_error, str(e))
             
-    def _on_trace_complete(self, path):
+    def _on_trace_complete(self, path: List[Dict[str, Any]]) -> None:
+        """
+        Callback triggered when the traceroute is complete.
+        :param path: List of hop data dictionaries
+        :return: None
+        """
         self.trace_progress.stop()
         self.trace_progress.pack_forget()
         self.trace_btn.config(state=NORMAL, text="Start Trace")
@@ -748,12 +968,18 @@ class NetworkMapperGUI(tb.Window):
         for hop in path:
             self.trace_tree.insert("", END, values=(hop['hop'], hop['ip'], hop['time']))
         
-    def _on_trace_error(self, err):
+    def _on_trace_error(self, err: str) -> None:
+        """
+        Callback triggered if an error occurs during traceroute.
+        :param err: The error message
+        :return: None
+        """
         self.trace_progress.stop()
         self.trace_progress.pack_forget()
         self.trace_btn.config(state=NORMAL, text="Start Trace")
         messagebox.showerror("Trace Error", f"An error occurred during traceroute:\n{err}")
 
+
 if __name__ == "__main__":
-    app = NetworkMapperGUI()
-    app.mainloop()
+    gui_app = NetworkMapperGUI()
+    gui_app.mainloop()

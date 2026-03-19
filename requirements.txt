@@ -1,4 +1,5 @@
-scapy
-rich
-rich-argparse
-ttkbootstrap
+scapy==2.7.0
+rich==14.3.3
+rich-argparse==1.7.2
+ttkbootstrap==1.20.2
+pytest

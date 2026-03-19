@@ -3,8 +3,13 @@ import argparse
 from utils import is_admin
 import cli
 
-def main():
-    """Main entry point."""
+
+def main() -> None:
+    """
+    Main entry point for the Network Mapper application.
+    Checks for administrator privileges and launches either the GUI or CLI mode.
+    :return: None
+    """
     # check administrator/root privileges
     if not is_admin():
         print("Error: This script requires administrator/root privileges to run.")
@@ -19,8 +24,8 @@ def main():
         try:
             import gui
             print("Starting GUI...")
-            app = gui.NetworkMapperGUI()
-            app.mainloop()
+            gui_app = gui.NetworkMapperGUI()
+            gui_app.mainloop()
         except ImportError as e:
             print(f"Error: GUI components (ttkbootstrap) not found or tkinter is missing. {e}")
             sys.exit(1)
@@ -30,6 +35,7 @@ def main():
     else:
         # pass control to the CLI module
         cli.main()
+
 
 if __name__ == "__main__":
     main()

@@ -4,14 +4,19 @@ import ctypes
 import subprocess
 import re
 import platform
-from scapy.all import Ether, ARP, srp1, conf
 import time
+from typing import Optional, Union, Any
+from scapy.all import Ether, ARP, srp1, conf
 
 
-def get_mac_by_ip(target_ip, iface, retries=3):
+def get_mac_by_ip(target_ip: str, iface: str, retries: int = 3) -> Optional[str]:
     """
     Uses ARP requests to find the MAC address associated with an IP.
     Sends multiple requests and retries to ensure reliability.
+    :param target_ip: target's IP address
+    :param iface: user's specified/default interface
+    :param retries: amount of attempts
+    :return: MAC address as a string, or None if not found
     """
     for i in range(retries):
         try:
@@ -34,10 +39,12 @@ def get_mac_by_ip(target_ip, iface, retries=3):
             
     return None
 
-def get_gateway(normalized_iface=None):
+def get_gateway(iface: Optional[str] = None) -> Optional[str]:
     """
-    Finds the IPv4 gateway IP address.
-    Resilient and cross-compatible (Windows/Linux/WSL/macOS).
+    finds the IPv4 gateway IP address.
+    cross-compatible (Windows/Linux/WSL/macOS).
+    :param iface: user's specified/default interface
+    :return: gateway IP address as a string, or None if not found
     """
     system = platform.system()
 
@@ -89,7 +96,12 @@ def get_gateway(normalized_iface=None):
     gw = getattr(conf.route, 'gw', None)
     return gw if gw and gw != '0.0.0.0' else None
 
-def broad_os_map(ttl):
+def broad_os_map(ttl: int) -> str:
+    """
+    Maps a TTL value to a broad OS category.
+    :param ttl: Time To Live value from an IP packet
+    :return: String describing the likely OS family
+    """
     if 0 < ttl <= 64:
         return "Unix-based (Linux/Unix/MacOS)"
     elif 64 < ttl <= 128:
@@ -99,7 +111,12 @@ def broad_os_map(ttl):
     else:
         return "Unknown/Spoofed"
 
-def is_valid_ip(ip):
+def is_valid_ip(ip: str) -> bool:
+    """
+    Validates if a string is a valid IPv4 address or CIDR network.
+    :param ip: IP address or CIDR string to validate
+    :return: True if valid, False otherwise
+    """
     try:
         # interface handles both individual addresses and CIDR networks
         net = ipaddress.ip_network(ip, strict=False)
@@ -109,7 +126,12 @@ def is_valid_ip(ip):
     except ValueError:
         return False
 
-def is_valid_port(port_str):
+def is_valid_port(port_str: Union[str, int]) -> bool:
+    """
+    Validates if a string or integer represents a valid port or port range.
+    :param port_str: Port number or range (e.g., "80", "20-80")
+    :return: True if valid, False otherwise
+    """
     try:
         # Split by dash to handle ranges, then convert to ints
         ports = [int(p) for p in str(port_str).split('-')]
@@ -121,10 +143,11 @@ def is_valid_port(port_str):
     except ValueError:
         return False
 
-def get_friendly_iface_name(scapy_iface_name):
+def get_friendly_iface_name(scapy_iface_name: str) -> str:
     """
-    Translates a Scapy interface GUID to a Windows Interface Alias 
-    (the 'Friendly Name' like 'Ethernet 2').
+    translates a Scapy interface GUID to a Windows Interface Alias
+    :param scapy_iface_name: The name or GUID of the interface used by Scapy
+    :return: friendly interface name
     """
     if os.name != 'nt':
         return scapy_iface_name
@@ -151,8 +174,14 @@ def get_friendly_iface_name(scapy_iface_name):
         pass
     return scapy_iface_name
 
-def set_static_arp(iface_name, ip, mac):
-    """Sets a static ARP entry to protect the local machine from self-poisoning."""
+def set_static_arp(iface_name: str, ip: str, mac: str) -> None:
+    """
+    sets a static ARP entry to protect the local machine from self-poisoning.
+    :param iface_name: user's specified/default interface
+    :param ip: gateway's IP address
+    :param mac: gateway's MAC address
+    :return: None
+    """
     if os.name == 'nt':
         friendly_name = get_friendly_iface_name(iface_name)
         try:
@@ -173,8 +202,13 @@ def set_static_arp(iface_name, ip, mac):
         except:
             pass
 
-def remove_static_arp(iface_name, ip):
-    """Removes a static ARP entry, reverting it to dynamic."""
+def remove_static_arp(iface_name: str, ip: str) -> None:
+    """
+    removes a static ARP entry, reverting it to dynamic.
+    :param iface_name: user's specified/default interface
+    :param ip: gateway's IP address
+    :return: None
+    """
     if os.name == 'nt':
         friendly_name = get_friendly_iface_name(iface_name)
         try:
@@ -191,7 +225,11 @@ def remove_static_arp(iface_name, ip):
         except:
             pass
 
-def is_admin():
+def is_admin() -> bool:
+    """
+    Checks if the script is running with administrative/root privileges.
+    :return: True if running as admin/root, False otherwise
+    """
     try:
         # windows
         if os.name == 'nt':

@@ -1,4 +1,5 @@
-from scapy.all import *
+from typing import List, Optional, Dict, Any, Union
+from scapy.all import srp, sr1, time, DNS, DNSQR, ICMP
 from scapy.layers.inet import IP, TCP, UDP
 from scapy.layers.l2 import ARP, Ether
 import logging
@@ -9,14 +10,26 @@ logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 import models
 from utils import broad_os_map
 
-class NetworkScanner:
-    def __init__(self, *, ip_range, port_range=None, iface):
-        self.ip_range = ip_range
-        self.port_range = port_range
-        self.iface = iface
-        self.hosts = []
 
-    def discover_hosts(self):
+class NetworkScanner:
+    """
+    Provides functionality to scan a network for hosts and ports.
+    """
+
+    def __init__(self, *, ip_range: str, port_range: Optional[Union[str, int, List[int]]] = None, iface: str) -> None:
+        """
+        Initializes the NetworkScanner.
+        :param ip_range: The IP range to scan (e.g., "192.168.1.0/24")
+        :param port_range: The port or range of ports to scan
+        :param iface: The network interface to use
+        :return: None
+        """
+        self.ip_range: str = ip_range
+        self.port_range: Optional[Union[str, int, List[int]]] = port_range
+        self.iface: str = iface
+        self.hosts: List[models.Host] = []
+
+    def discover_hosts(self) -> None:
         """
         Discovers hosts in the specified IP range using ARP requests.
         Only works for local networks.
@@ -28,16 +41,16 @@ class NetworkScanner:
             host = models.Host(ip_address=rcv[ARP].psrc, mac_address=rcv[ARP].hwsrc)
             self.hosts.append(host)
 
-    def scan_ports(self, host_obj):
+    def scan_ports(self, host_obj: models.Host) -> None:
         """
         Scans the specified host for open ports in the specified
         port range using TCP SYN scan, and tries to guess
         the OS using ttl. It then updates the host's ports
         list with <models.Port> objects.
-        :param host_obj:
+        :param host_obj: The Host object to scan
         :return: None
         """
-        known_ports = {
+        known_ports: Dict[int, str] = {
             20: "ftp-data", 21: "ftp", 22: "ssh", 23: "telnet", 25: "smtp",
             53: "domain", 80: "http", 110: "pop3", 111: "rpcbind", 135: "msrpc",
             139: "netbios-ssn", 143: "imap", 443: "https", 445: "microsoft-ds",
@@ -89,18 +102,29 @@ class NetworkScanner:
             port = models.Port(port_number=port_num, status="open|filtered", service=service, proto="udp")
             host_obj.add_port(port)
 
+
 class TraceScanner:
-    def __init__(self, *,  target_ip, max_hops):
-        self.target_ip = target_ip
-        self.max_hops = max_hops
-        self.path = []
+    """
+    Provides functionality to trace the network path to a target.
+    """
+
+    def __init__(self, *, target_ip: str, max_hops: int) -> None:
+        """
+        Initializes the TraceScanner.
+        :param target_ip: The destination IP address
+        :param max_hops: Maximum number of hops to trace
+        :return: None
+        """
+        self.target_ip: str = target_ip
+        self.max_hops: int = max_hops
+        self.path: List[Dict[str, Any]] = []
 
     @staticmethod
-    def resolve_hostname(hostname):
+    def resolve_hostname(hostname: str) -> Optional[str]:
         """
         translates hostname to an IP address using an A type DNS query.
-        :param hostname:
-        :return: IP address of the host
+        :param hostname: The hostname to resolve
+        :return: IP address of the host or None if resolution fails
         """
         #We ask google's DNS server
         pkt = IP(dst="8.8.8.8") / UDP(dport=53) / DNS(rd=1, qd=DNSQR(qname=hostname, qtype="A"))
@@ -109,16 +133,22 @@ class TraceScanner:
             return rsp[DNS].an[0].rdata
         else:
             return None
-    def craft_packet(self, ttl):
+
+    def craft_packet(self, ttl: int) -> IP:
         """
         Crafts an ICMP Echo Request packet with the specified TTL
         to be sent to the target IP for traceroute purposes.
-        :param ttl:
-        :return:
+        :param ttl: The Time To Live value for the packet
+        :return: A Scapy IP packet object
         """
         pkt = IP(dst=self.target_ip, ttl=ttl) / ICMP()
         return pkt
-    def run_trace(self):
+
+    def run_trace(self) -> None:
+        """
+        Executes the traceroute by sending packets with increasing TTL values.
+        :return: None
+        """
         for ttl in range(1, self.max_hops + 1):
             pkt = self.craft_packet(ttl)
             start_time = time.time()
@@ -133,5 +163,10 @@ class TraceScanner:
                 self.path.append({"hop": ttl, "ip": ans.src, "time": f"{rtt} ms"})
                 if ans.src == self.target_ip or (ans.haslayer(ICMP) and ans[ICMP].type == 0):
                     break
-    def start(self):
+
+    def start(self) -> None:
+        """
+        Starts the traceroute process.
+        :return: None
+        """
         self.run_trace()
