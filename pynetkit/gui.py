@@ -2,6 +2,7 @@ import threading
 from typing import Optional, List, Any, Dict, Union, Tuple
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
+from ttkbootstrap.scrolled import ScrolledFrame
 from tkinter import messagebox
 from scapy.interfaces import get_working_ifaces
 from scapy.all import conf
@@ -24,7 +25,7 @@ class NetworkMapperGUI(tb.Window):
         """
         super().__init__(themename="darkly") # Clean, professional dark mode
         self.title("PyNetKit")
-        self.geometry("1000x800") # More responsive default size
+        self.geometry("1080x600") # Fixed default size as requested
         
         self.interfaces: Dict[str, str] = {}
         self.populate_interfaces()
@@ -40,9 +41,8 @@ class NetworkMapperGUI(tb.Window):
         self.setup_ui()
         self.select_default_interface()
         
-        # Dynamically set the minimum size so buttons never get cut off
-        self.update_idletasks()
-        self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
+        # Force the geometry again after UI setup to ensure it sticks
+        self.after(100, lambda: self.geometry("1080x600"))
         
     def populate_interfaces(self) -> None:
         """
@@ -79,36 +79,51 @@ class NetworkMapperGUI(tb.Window):
         self.paned_window.pack(fill=BOTH, expand=True, padx=10, pady=10)
         
         # --- TOP HALF: Master View (Discovery & List) ---
-        self.top_frame = tb.Frame(self.paned_window)
-        self.paned_window.add(self.top_frame, weight=1) # Top gets 1 part height
+        # ScrolledFrame must be wrapped to avoid parenting issues in Panedwindow/Notebook
+        self.top_frame_wrapper = tb.Frame(self.paned_window)
+        self.top_scroll = ScrolledFrame(self.top_frame_wrapper, autohide=True)
+        self.top_scroll.pack(fill=BOTH, expand=True)
+        self.paned_window.add(self.top_frame_wrapper, weight=1)
+        self.top_frame = self.top_scroll
         
         self.setup_master_view()
         
         # --- BOTTOM HALF: Detail View (Notebook for active host) ---
         self.bottom_frame = tb.Frame(self.paned_window)
-        self.paned_window.add(self.bottom_frame, weight=2) # Bottom gets 2 parts height
+        self.paned_window.add(self.bottom_frame, weight=2)
         
-        # The actual notebook (Always packed to prevent UI jumps)
+        # The actual notebook
         self.detail_notebook = tb.Notebook(self.bottom_frame)
         self.detail_notebook.pack(fill=BOTH, expand=True)
         self.detail_notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         
-        self.summary_tab = tb.Frame(self.detail_notebook, padding="15")
-        self.detail_notebook.add(self.summary_tab, text="Summary")
-        self.no_host_label = tb.Label(self.summary_tab, text="Select a host from the table above to view details and launch attacks.", font=("Helvetica", 14), foreground="gray", justify=CENTER)
-        self.no_host_label.pack(expand=True)
+        # Each tab is a Wrapper Frame containing a ScrolledFrame
+        self.summary_tab_wrapper = tb.Frame(self.detail_notebook, padding="15")
+        self.summary_tab = ScrolledFrame(self.summary_tab_wrapper, autohide=True)
+        self.summary_tab.pack(fill=BOTH, expand=True)
+        self.detail_notebook.add(self.summary_tab_wrapper, text="Summary")
+        self.no_host_label = tb.Label(self.summary_tab.container, text="Select a host from the table above to view details and launch attacks.", font=("Helvetica", 14), foreground="gray", justify=CENTER)
+        self.no_host_label.pack(expand=True, pady=100)
         
-        self.ports_tab = tb.Frame(self.detail_notebook, padding="15")
-        self.detail_notebook.add(self.ports_tab, text="Port Scanner", state="disabled")
+        self.ports_tab_wrapper = tb.Frame(self.detail_notebook, padding="15")
+        self.ports_tab = ScrolledFrame(self.ports_tab_wrapper, autohide=True)
+        self.ports_tab.pack(fill=BOTH, expand=True)
+        self.detail_notebook.add(self.ports_tab_wrapper, text="Port Scanner", state="disabled")
         
-        self.arp_tab = tb.Frame(self.detail_notebook, padding="15")
-        self.detail_notebook.add(self.arp_tab, text="ARP Poisoning", state="disabled")
+        self.arp_tab_wrapper = tb.Frame(self.detail_notebook, padding="15")
+        self.arp_tab = ScrolledFrame(self.arp_tab_wrapper, autohide=True)
+        self.arp_tab.pack(fill=BOTH, expand=True)
+        self.detail_notebook.add(self.arp_tab_wrapper, text="ARP Poisoning", state="disabled")
         
-        self.dos_tab = tb.Frame(self.detail_notebook, padding="15")
-        self.detail_notebook.add(self.dos_tab, text="Denial of Service", state="disabled")
+        self.dos_tab_wrapper = tb.Frame(self.detail_notebook, padding="15")
+        self.dos_tab = ScrolledFrame(self.dos_tab_wrapper, autohide=True)
+        self.dos_tab.pack(fill=BOTH, expand=True)
+        self.detail_notebook.add(self.dos_tab_wrapper, text="Denial of Service", state="disabled")
         
-        self.trace_tab = tb.Frame(self.detail_notebook, padding="15")
-        self.detail_notebook.add(self.trace_tab, text="Traceroute", state="disabled")
+        self.trace_tab_wrapper = tb.Frame(self.detail_notebook, padding="15")
+        self.trace_tab = ScrolledFrame(self.trace_tab_wrapper, autohide=True)
+        self.trace_tab.pack(fill=BOTH, expand=True)
+        self.detail_notebook.add(self.trace_tab_wrapper, text="Traceroute", state="disabled")
         
         self.setup_ports_ui()
         self.setup_arp_ui()
@@ -121,7 +136,7 @@ class NetworkMapperGUI(tb.Window):
         :return: None
         """
         # Controls Frame
-        controls_frame = tb.Frame(self.top_frame)
+        controls_frame = tb.Frame(self.top_frame.container)
         controls_frame.pack(fill=X, pady=(0, 10))
         
         # Row 0
@@ -153,15 +168,14 @@ class NetworkMapperGUI(tb.Window):
         self.scan_btn = tb.Button(controls_frame, text="Start Scan", command=self.start_host_scan, bootstyle=SUCCESS)
         self.scan_btn.grid(row=1, column=3, sticky=W, pady=5)
         
-        self.scan_progress = tb.Progressbar(self.top_frame, mode='indeterminate', bootstyle=SUCCESS)
-        # Packed when scanning starts
+        self.scan_progress = tb.Progressbar(self.top_frame.container, mode='indeterminate', bootstyle=SUCCESS)
         
         # Host Table Frame
-        table_frame = tb.Frame(self.top_frame)
+        table_frame = tb.Frame(self.top_frame.container)
         table_frame.pack(fill=BOTH, expand=True, pady=(5, 0))
         
         columns = ("ip", "mac", "os", "ports")
-        self.host_tree = tb.Treeview(table_frame, columns=columns, show="headings", bootstyle=INFO, selectmode="browse")
+        self.host_tree = tb.Treeview(table_frame, columns=columns, show="headings", bootstyle=INFO, selectmode="browse", height=12)
         self.host_tree.heading("ip", text="IP Address")
         self.host_tree.heading("mac", text="MAC Address")
         self.host_tree.heading("os", text="OS Guess")
@@ -172,11 +186,10 @@ class NetworkMapperGUI(tb.Window):
         self.host_tree.column("os", width=150)
         self.host_tree.column("ports", width=200)
         
-        scroll = tb.Scrollbar(table_frame, orient=VERTICAL, command=self.host_tree.yview, bootstyle=ROUND)
-        self.host_tree.configure(yscrollcommand=scroll.set)
-        
-        self.host_tree.pack(side=LEFT, fill=BOTH, expand=True)
-        scroll.pack(side=RIGHT, fill=Y)
+        # We don't need manual scrollbars if we use ScrolledFrame, 
+        # but for Treeview it's better to have its own so it doesn't move everything.
+        # However, to satisfy "scroll for every tab", the ScrolledFrame will handle overflow.
+        self.host_tree.pack(fill=BOTH, expand=True)
         
         # Bind row selection
         self.host_tree.bind("<<TreeviewSelect>>", self.on_host_selected)
@@ -235,11 +248,11 @@ class NetworkMapperGUI(tb.Window):
         
         # Deselect host & update notebook
         self.active_host = None
-        self.detail_notebook.tab(self.ports_tab, state="disabled")
-        self.detail_notebook.tab(self.arp_tab, state="disabled")
-        self.detail_notebook.tab(self.dos_tab, state="disabled")
-        self.detail_notebook.tab(self.trace_tab, state="disabled")
-        self.detail_notebook.select(self.summary_tab)
+        self.detail_notebook.tab(self.ports_tab_wrapper, state="disabled")
+        self.detail_notebook.tab(self.arp_tab_wrapper, state="disabled")
+        self.detail_notebook.tab(self.dos_tab_wrapper, state="disabled")
+        self.detail_notebook.tab(self.trace_tab_wrapper, state="disabled")
+        self.detail_notebook.select(self.summary_tab_wrapper)
         self.no_host_label.config(text="Select a host from the table above to view details and launch attacks.", foreground="gray")
         
         threading.Thread(target=self.run_scan, args=(real_iface, ip_range, do_port_scan, port_range), daemon=True).start()
@@ -324,10 +337,10 @@ class NetworkMapperGUI(tb.Window):
         self.no_host_label.config(text=f"Selected Host:\nIP: {self.active_host.ip_address}\nMAC: {self.active_host.mac_address}", foreground="white")
         
         # Enable Notebook Tabs
-        self.detail_notebook.tab(self.ports_tab, state="normal")
-        self.detail_notebook.tab(self.arp_tab, state="normal")
-        self.detail_notebook.tab(self.dos_tab, state="normal")
-        self.detail_notebook.tab(self.trace_tab, state="normal")
+        self.detail_notebook.tab(self.ports_tab_wrapper, state="normal")
+        self.detail_notebook.tab(self.arp_tab_wrapper, state="normal")
+        self.detail_notebook.tab(self.dos_tab_wrapper, state="normal")
+        self.detail_notebook.tab(self.trace_tab_wrapper, state="normal")
         
         # Mark ports as needing refresh but only refresh if the tab is visible
         self.ports_need_refresh = True
@@ -363,7 +376,7 @@ class NetworkMapperGUI(tb.Window):
         Sets up the UI components for the Port Scanner tab.
         :return: None
         """
-        top_frame = tb.Frame(self.ports_tab)
+        top_frame = tb.Frame(self.ports_tab.container)
         top_frame.pack(fill=X, pady=(0, 15))
         
         tb.Label(top_frame, text="Port Range:", font=("Helvetica", 11)).grid(row=0, column=0, sticky=W, padx=(0, 5), pady=5)
@@ -386,20 +399,16 @@ class NetworkMapperGUI(tb.Window):
         self.proto_combo.grid(row=1, column=3, sticky=W, pady=5)
         self.proto_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_ports_tab())
         
-        self.port_progress = tb.Progressbar(self.ports_tab, mode='indeterminate', bootstyle=INFO)
+        self.port_progress = tb.Progressbar(self.ports_tab.container, mode='indeterminate', bootstyle=INFO)
         
         # Results Tree
         columns = ("Port", "Proto", "Status", "Service")
-        self.port_tree = tb.Treeview(self.ports_tab, columns=columns, show="headings", bootstyle=INFO)
+        self.port_tree = tb.Treeview(self.ports_tab.container, columns=columns, show="headings", bootstyle=INFO, height=15)
         for col in columns:
             self.port_tree.heading(col, text=col)
             self.port_tree.column(col, width=120, anchor=CENTER)
             
-        scroll = tb.Scrollbar(self.ports_tab, orient=VERTICAL, command=self.port_tree.yview, bootstyle=ROUND)
-        self.port_tree.configure(yscrollcommand=scroll.set)
-        
-        self.port_tree.pack(side=LEFT, fill=BOTH, expand=True)
-        scroll.pack(side=RIGHT, fill=Y)
+        self.port_tree.pack(fill=BOTH, expand=True)
 
     def refresh_ports_tab(self) -> None:
         """
@@ -529,7 +538,7 @@ class NetworkMapperGUI(tb.Window):
         Sets up the UI components for the ARP Poisoning tab.
         :return: None
         """
-        input_frame = tb.Frame(self.arp_tab)
+        input_frame = tb.Frame(self.arp_tab.container)
         input_frame.pack(fill=X, pady=(0, 15))
         
         tb.Label(input_frame, text="Gateway IP:").grid(row=0, column=0, sticky=W, pady=5)
@@ -539,7 +548,7 @@ class NetworkMapperGUI(tb.Window):
             self.gw_ip_entry.insert(0, gw)
         self.gw_ip_entry.grid(row=0, column=1, sticky=W, pady=5, padx=15)
         
-        flags_frame = tb.Labelframe(self.arp_tab, text="Attack Options", padding="15", bootstyle=WARNING)
+        flags_frame = tb.Labelframe(self.arp_tab.container, text="Attack Options", padding="15", bootstyle=WARNING)
         flags_frame.pack(fill=X, pady=15)
         
         self.do_save_var = tb.BooleanVar(value=False)
@@ -557,7 +566,7 @@ class NetworkMapperGUI(tb.Window):
         self.spoofed_ip_entry = tb.Entry(self.dns_frame, width=30)
         self.spoofed_ip_entry.grid(row=1, column=1, sticky=W, pady=5, padx=10)
         
-        ctrl_frame = tb.Frame(self.arp_tab)
+        ctrl_frame = tb.Frame(self.arp_tab.container)
         ctrl_frame.pack(fill=X, pady=25)
         
         self.arp_start_btn = tb.Button(ctrl_frame, text="Start MiTM Attack", command=self.start_arp_attack, bootstyle=DANGER)
@@ -566,8 +575,11 @@ class NetworkMapperGUI(tb.Window):
         self.arp_stop_btn = tb.Button(ctrl_frame, text="Stop Attack", command=self.stop_arp_attack, state=DISABLED, bootstyle=SECONDARY)
         self.arp_stop_btn.pack(side=LEFT, ipadx=10, ipady=5)
         
-        self.arp_status_lbl = tb.Label(self.arp_tab, text="Status: Ready", font=("Helvetica", 11, "bold"), bootstyle=SUCCESS)
+        self.arp_status_lbl = tb.Label(self.arp_tab.container, text="Status: Ready", font=("Helvetica", 11, "bold"), bootstyle=SUCCESS)
         self.arp_status_lbl.pack(anchor=W, pady=15)
+        
+        # Spacer to ensure scrolling can be triggered/visualized
+        tb.Label(self.arp_tab.container, text="").pack(pady=20)
 
     def toggle_dns_spoof(self) -> None:
         """
@@ -703,9 +715,14 @@ class NetworkMapperGUI(tb.Window):
         Sets up the UI components for the Denial of Service tab.
         :return: None
         """
-        st_frame = tb.Labelframe(self.dos_tab, text="Single Target DoS (ARP Blackhole)", padding="15", bootstyle=DANGER)
-        st_frame.pack(fill=X, pady=(0, 20))
-        tb.Label(st_frame, text="Cuts off the active target from the gateway by poisoning both with dummy MACs.").pack(anchor=W, pady=(0, 15))
+        # Horizontal container for side-by-side layout
+        main_dos_frame = tb.Frame(self.dos_tab.container)
+        main_dos_frame.pack(fill=X, expand=True, pady=(0, 20))
+
+        # --- LEFT SIDE: Single Target DoS ---
+        st_frame = tb.Labelframe(main_dos_frame, text="Single Target DoS (ARP Blackhole)", padding="15", bootstyle=DANGER)
+        st_frame.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 10))
+        tb.Label(st_frame, text="Cuts off the active target from the gateway by poisoning both with dummy MACs.", wraplength=450).pack(anchor=W, pady=(0, 15))
         
         st_btn_frame = tb.Frame(st_frame)
         st_btn_frame.pack(fill=X)
@@ -717,10 +734,11 @@ class NetworkMapperGUI(tb.Window):
         self.st_dos_status_lbl = tb.Label(st_frame, text="Status: Ready", bootstyle=SUCCESS, font=("Helvetica", 10, "bold"))
         self.st_dos_status_lbl.pack(anchor=W, pady=10)
         
-        dhcp_frame = tb.Labelframe(self.dos_tab, text="DHCP Starvation (Network-Wide)", padding="15", bootstyle=DANGER)
-        dhcp_frame.pack(fill=X)
+        # --- RIGHT SIDE: DHCP Starvation ---
+        dhcp_frame = tb.Labelframe(main_dos_frame, text="DHCP Starvation (Network-Wide)", padding="15", bootstyle=DANGER)
+        dhcp_frame.pack(side=LEFT, fill=BOTH, expand=True, padx=(10, 0))
         
-        warning_lbl = tb.Label(dhcp_frame, text="WARNING: Floods the network with DHCP requests, exhausting the pool for ALL devices.", bootstyle=WARNING, wraplength=400)
+        warning_lbl = tb.Label(dhcp_frame, text="WARNING: Floods the network with DHCP requests, exhausting the pool for ALL devices.", bootstyle=WARNING, wraplength=450)
         warning_lbl.pack(anchor=W, pady=(0, 15), fill=X)
         
         dhcp_btn_frame = tb.Frame(dhcp_frame)
@@ -732,6 +750,9 @@ class NetworkMapperGUI(tb.Window):
         
         self.dhcp_status_lbl = tb.Label(dhcp_frame, text="Status: Ready", bootstyle=SUCCESS, font=("Helvetica", 10, "bold"))
         self.dhcp_status_lbl.pack(anchor=W, pady=(10, 0))
+        
+        # Spacer to ensure scrolling can be triggered/visualized
+        tb.Label(self.dos_tab.container, text="").pack(pady=20)
 
     def start_st_dos(self) -> None:
         """
@@ -874,7 +895,7 @@ class NetworkMapperGUI(tb.Window):
         Sets up the UI components for the Traceroute tab.
         :return: None
         """
-        top_frame = tb.Frame(self.trace_tab)
+        top_frame = tb.Frame(self.trace_tab.container)
         top_frame.pack(fill=X, pady=(0, 15))
         
         tb.Label(top_frame, text="Target IP/Domain:", font=("Helvetica", 11)).grid(row=0, column=0, sticky=W, padx=(0, 5), pady=5)
@@ -890,11 +911,11 @@ class NetworkMapperGUI(tb.Window):
         self.trace_btn = tb.Button(top_frame, text="Start Trace", command=self.start_trace, bootstyle=PRIMARY)
         self.trace_btn.grid(row=0, column=4, sticky=W, pady=5)
         
-        self.trace_progress = tb.Progressbar(self.trace_tab, mode='indeterminate', bootstyle=PRIMARY)
+        self.trace_progress = tb.Progressbar(self.trace_tab.container, mode='indeterminate', bootstyle=PRIMARY)
         
         # Results Tree
         columns = ("Hop", "IP Address", "Time")
-        self.trace_tree = tb.Treeview(self.trace_tab, columns=columns, show="headings", bootstyle=PRIMARY)
+        self.trace_tree = tb.Treeview(self.trace_tab.container, columns=columns, show="headings", bootstyle=PRIMARY, height=10)
         for col in columns:
             self.trace_tree.heading(col, text=col)
             
@@ -902,11 +923,7 @@ class NetworkMapperGUI(tb.Window):
         self.trace_tree.column("IP Address", width=300, anchor=W)
         self.trace_tree.column("Time", width=150, anchor=W)
             
-        scroll = tb.Scrollbar(self.trace_tab, orient=VERTICAL, command=self.trace_tree.yview, bootstyle=ROUND)
-        self.trace_tree.configure(yscrollcommand=scroll.set)
-        
-        self.trace_tree.pack(side=LEFT, fill=BOTH, expand=True)
-        scroll.pack(side=RIGHT, fill=Y)
+        self.trace_tree.pack(fill=BOTH, expand=True)
 
     def start_trace(self) -> None:
         """
