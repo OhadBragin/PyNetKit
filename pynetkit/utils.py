@@ -7,7 +7,7 @@ import platform
 import time
 from typing import Optional, Union, Any
 from scapy.all import Ether, ARP, srp1, conf
-
+import requests
 
 def get_mac_by_ip(target_ip: str, iface: str, retries: int = 3) -> Optional[str]:
     """
@@ -103,13 +103,29 @@ def broad_os_map(ttl: int) -> str:
     :return: String describing the likely OS family
     """
     if 0 < ttl <= 64:
-        return "Unix-based (Linux/Unix/MacOS)"
+        return "Unix"
     elif 64 < ttl <= 128:
         return "Windows"
     elif 128 < ttl <= 255:
-        return "Cisco/Network Device"
+        return "Cisco"
     else:
-        return "Unknown/Spoofed"
+        return "Unknown"
+
+
+def get_vendor_by_mac(mac: str) -> str:
+    if not mac:
+        return "Unknown"
+
+    try:
+        # We only need the first 8 characters (XX:XX:XX) for the OUI
+        url = f"https://api.macvendors.com/{mac}"
+        response = requests.get(url, timeout=2)
+
+        if response.status_code == 200:
+            return response.text
+        return "Unknown"
+    except requests.exceptions.RequestException:
+        return "API Error"
 
 def is_valid_ip(ip: str) -> bool:
     """
