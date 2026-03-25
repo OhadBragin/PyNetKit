@@ -23,17 +23,17 @@ def main() -> None:
     if args.gui:
         try:
             from . import gui
-            print("Starting GUI...")
+            #start ttk GUI
             gui_app = gui.NetworkMapperGUI()
             gui_app.mainloop()
+
         except ImportError as e:
-            print(f"Error: GUI components (ttkbootstrap) not found or tkinter is missing. {e}")
+            print(f"Error: GUI components (ttkbootstrap) not found. Please ensure ttkbootstrap is installed. Details: {e}")
             sys.exit(1)
         except Exception as e:
             print(f"Failed to start GUI: {e}")
             sys.exit(1)
     else:
-        # pass control to the CLI module
         cli.main()
 
 

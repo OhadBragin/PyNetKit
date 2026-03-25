@@ -7,8 +7,8 @@ name = "pynetkit"
 version = "1.0.0"
 description = "A powerful, Nmap-inspired network discovery and security auditing toolkit with a Rich CLI and modern GUI."
 readme = "README.md"
-license = { file = "LICENSE" }
 requires-python = ">=3.8"
+license = "MIT"
 authors = [
     { name = "Developer" }
 ]
@@ -16,12 +16,11 @@ dependencies = [
     "scapy==2.7.0",
     "rich==14.3.3",
     "rich-argparse==1.7.2",
-    "ttkbootstrap==1.20.2"
+    "PyQt6>=6.4.0"
 ]
-keywords = ["network", "security", "scanner", "arp-spoofing", "dos", "cli", "gui", "scapy", "rich"]
+keywords = ["network", "security", "scanner", "arp-spoofing", "dos", "cli", "gui", "pyqt6", "scapy", "rich"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Security",
     "Topic :: System :: Networking :: Monitoring"
@@ -32,6 +31,9 @@ Homepage = "https://github.com/OhadBragin/pynetkit"
 
 [project.scripts]
 pynetkit = "pynetkit.main:main"
+
+[tool.setuptools.packages.find]
+include = ["pynetkit*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
