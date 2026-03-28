@@ -860,7 +860,14 @@ class NetworkMapperGUI(tb.Window):
             if not gw_mac:
                 self.after(0, self._on_st_dos_error, "Could not resolve Gateway MAC.")
                 return
-            if self.active_host is None: return
+            if self.active_host is None:
+                return
+
+            # --- ARP SHIELD START ---
+            set_static_arp(iface, gw_ip, gw_mac)
+            self._shielded_gw_ip = gw_ip
+            self._shielded_gw_iface = iface
+
             self.st_dos_attack = SingleTargetDos(self.active_host, gw_ip, gw_mac, iface)
             self.st_dos_attack.start()
             self.after(0, self._on_st_dos_started)
@@ -883,7 +890,18 @@ class NetworkMapperGUI(tb.Window):
             threading.Thread(target=self._stop_st_dos_thread, daemon=True).start()
 
     def _stop_st_dos_thread(self) -> None:
-        if self.st_dos_attack: self.st_dos_attack.stop()
+        if self.st_dos_attack:
+            self.st_dos_attack.stop()
+
+        # --- ARP SHIELD END ---
+        if self._shielded_gw_ip and self._shielded_gw_iface:
+            try:
+                remove_static_arp(self._shielded_gw_iface, self._shielded_gw_ip)
+            except Exception:
+                pass
+            self._shielded_gw_ip = None
+            self._shielded_gw_iface = None
+
         self.after(0, self._on_st_dos_stopped)
 
     def _on_st_dos_stopped(self) -> None:

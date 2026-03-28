@@ -44,8 +44,11 @@ def test_is_valid_port():
     assert is_valid_port("abc") == False
 
 def test_broad_os_map():
-    assert broad_os_map(64) == "Unix"
+    assert broad_os_map(1) == "Linux/Unix"
+    assert broad_os_map(64) == "Linux/Unix"
+    assert broad_os_map(65) == "Windows"
     assert broad_os_map(128) == "Windows"
+    assert broad_os_map(129) == "Cisco"
     assert broad_os_map(255) == "Cisco"
     assert broad_os_map(0) == "Unknown"
     assert broad_os_map(300) == "Unknown"

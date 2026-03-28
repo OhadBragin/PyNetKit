@@ -60,26 +60,34 @@ class NetworkScanner:
             8080: "http-proxy", 8443: "https-alt"
         }
 
-        # TCP Scan (Layer 2 - since we know the MAC)
+        # TCP Scan
         pkts_tcp = Ether(dst=host_obj.mac_address) / IP(dst=host_obj.ip_address) / TCP(dport=self.port_range, flags="S")
-        ans_tcp, _ = srp(pkts_tcp, timeout=1, iface=self.iface, verbose=False)
+        ans_tcp, unans_tcp = srp(pkts_tcp, timeout=1, iface=self.iface, verbose=False)
         for snd, rsp in ans_tcp:
             if rsp.haslayer(TCP):
                 port_num = rsp[TCP].sport
                 service = known_ports.get(port_num, "unknown")
-                if rsp[TCP].flags == "SA": # SYN-ACK
+                if rsp[TCP].flags == "SA":  # SYN-ACK
                     port = models.Port(port_number=port_num, status="open", service=service, proto="tcp")
                     host_obj.add_port(port)
                     host_obj.os = broad_os_map(rsp[IP].ttl)
-                elif rsp[TCP].flags == "RA": # RST-ACK
+                elif rsp[TCP].flags == "RA":  # RST-ACK
                     port = models.Port(port_number=port_num, status="closed", service=service, proto="tcp")
                     host_obj.add_port(port)
                     host_obj.os = broad_os_map(rsp[IP].ttl)
-            else:
+            # Non-TCP responses (e.g. ICMP unreachable)
+            elif rsp.haslayer(ICMP):
                 port_num = snd[TCP].dport
                 service = known_ports.get(port_num, "unknown")
                 port = models.Port(port_number=port_num, status="filtered", service=service, proto="tcp")
                 host_obj.add_port(port)
+
+        # ports that got no response at all are filtered
+        for snd in unans_tcp:
+            port_num = snd[TCP].dport
+            service = known_ports.get(port_num, "unknown")
+            port = models.Port(port_number=port_num, status="filtered", service=service, proto="tcp")
+            host_obj.add_port(port)
 
         # UDP Scan (Layer 2)
         pkts_udp = Ether(dst=host_obj.mac_address) / IP(dst=host_obj.ip_address) / UDP(dport=self.port_range)
