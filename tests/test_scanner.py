@@ -10,7 +10,11 @@ class TestNetworkScanner(unittest.TestCase):
         self.scanner = NetworkScanner(ip_range="192.168.1.0/24", port_range=[80, 443], iface="eth0")
 
     @patch("pynetkit.scanner.srp")
-    def test_discover_hosts(self, mock_srp):
+    @patch("pynetkit.scanner.get_vendor_by_mac")
+    def test_discover_hosts(self, mock_vendor, mock_srp):
+        # Mocking vendor lookup
+        mock_vendor.return_value = ("VMware", "VMware, Inc.")
+
         # Mocking ARP response
         mock_rcv = MagicMock()
         mock_rcv.haslayer.return_value = True
@@ -25,6 +29,8 @@ class TestNetworkScanner(unittest.TestCase):
         self.assertEqual(len(self.scanner.hosts), 1)
         self.assertEqual(self.scanner.hosts[0].ip_address, "192.168.1.5")
         self.assertEqual(self.scanner.hosts[0].mac_address, "00:11:22:33:44:55")
+        self.assertEqual(self.scanner.hosts[0].short_vendor, "VMware")
+        self.assertEqual(self.scanner.hosts[0].long_vendor, "VMware, Inc.")
 
     @patch("pynetkit.scanner.srp")
     @patch("pynetkit.scanner.broad_os_map")

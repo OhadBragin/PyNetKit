@@ -18,7 +18,8 @@ def test_host_init():
     host = Host("192.168.1.1", "00:0C:29:DD:EE:FF")
     assert host.ip_address == "192.168.1.1"
     assert host.mac_address == "00:0C:29:DD:EE:FF"
-    assert host.vendor is None # vendor is None upon init. Resolves later.
+    assert host.short_vendor is None
+    assert host.long_vendor is None
     assert host.ports == []
     assert host.os is None
 

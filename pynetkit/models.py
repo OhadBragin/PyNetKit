@@ -35,7 +35,8 @@ class Host:
         """
         self.ip_address: Optional[str] = ip_address
         self.mac_address: Optional[str] = mac_address
-        self.vendor: Optional[str] = None
+        self.short_vendor: Optional[str] = None
+        self.long_vendor: Optional[str] = None
         self.ports: List[Port] = []
         self.os: Optional[str] = None
 

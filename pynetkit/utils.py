@@ -112,20 +112,66 @@ def broad_os_map(ttl: int) -> str:
         return "Unknown"
 
 
-def get_vendor_by_mac(mac: str) -> str:
+_vendor_db_cache = None
+
+def get_vendor_by_mac(mac: str) -> tuple:
+    """
+    looks up vendor and returns a short and long name
+    :param mac: MAC address to look up
+    :return: Vendor short and long name in a tuple: (short_name, long_name)
+    """
+    global _vendor_db_cache
+    if _vendor_db_cache is None:
+        _vendor_db_cache = load_mac_vendor_db()
+    
+    short_DB, long_DB = _vendor_db_cache
+    
     if not mac:
-        return "Unknown"
+        return ("Unknown", "Unknown Vendor")
+        
+    # Standardize MAC to uppercase and take prefix in format XX:XX:XX (8 chars)
+    mac_prefix = mac.upper()[:8]
+    return (short_DB.get(mac_prefix, "Unknown"), long_DB.get(mac_prefix, "Unknown Vendor"))
+
+def load_mac_vendor_db() -> tuple:
+    """
+    Loads the MAC vendor database using a robust path resolution strategy.
+    Checks for resources/vendorDB.txt relative to the package and the CWD.
+    :return: Tuple of (short_DB, long_DB)
+    """
+    short_DB = {}
+    long_DB = {}
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Define potential paths for the vendor database
+    
+    path = os.path.join(current_dir, "..", "resources", "vendorDB.txt")    
+    
+    if not path:
+        print("debug")
+        return short_DB, long_DB
 
     try:
-        # We only need the first 8 characters (XX:XX:XX) for the OUI
-        url = f"https://api.macvendors.com/{mac}"
-        response = requests.get(url, timeout=2)
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # split whitepsace
+                parts = line.split()
+                if len(parts) >= 2:
+                    prefix = parts[0] 
+                    short_name = parts[1]
+                    # rest is long name
+                    long_name = " ".join(parts[2:]) 
+                    
+                    short_DB[prefix] = short_name
+                    long_DB[prefix] = long_name
+        return (short_DB, long_DB)
+    except Exception as e:
+        print(f"Error loading MAC vendor database: {e}")
 
-        if response.status_code == 200:
-            return response.text
-        return "Unknown"
-    except requests.exceptions.RequestException:
-        return "API Error"
+    return short_DB, long_DB
 
 def is_valid_ip(ip: str) -> bool:
     """

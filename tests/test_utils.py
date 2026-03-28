@@ -7,11 +7,22 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from pynetkit.utils import is_valid_ip, is_valid_port, broad_os_map, get_vendor_by_mac
 
+from unittest.mock import patch
+
 def test_get_vendor_by_mac():
-    assert get_vendor_by_mac("00:0c:29:ab:cd:ef") == "VMware"
-    assert get_vendor_by_mac("b8:27:eb:11:22:33") == "Raspberry Pi"
-    assert get_vendor_by_mac("00:00:00:00:00:00") == "Unknown"
-    assert get_vendor_by_mac("") == "Unknown"
+    mock_db = (
+        {"00:0C:29": "VMware", "B8:27:EB": "Raspberry"},
+        {"00:0C:29": "VMware, Inc.", "B8:27:EB": "Raspberry Pi Foundation"}
+    )
+    with patch("pynetkit.utils.load_mac_vendor_db", return_value=mock_db):
+        # Reset cache for test
+        import pynetkit.utils
+        pynetkit.utils._vendor_db_cache = None
+        
+        assert get_vendor_by_mac("00:0c:29:ab:cd:ef") == ("VMware", "VMware, Inc.")
+        assert get_vendor_by_mac("b8:27:eb:11:22:33") == ("Raspberry", "Raspberry Pi Foundation")
+        assert get_vendor_by_mac("00:00:00:00:00:00") == ("Unknown", "Unknown Vendor")
+        assert get_vendor_by_mac("") == ("Unknown", "Unknown Vendor")
 
 def test_is_valid_ip():
     assert is_valid_ip("192.168.1.1") == True

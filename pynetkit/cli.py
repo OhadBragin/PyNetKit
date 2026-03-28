@@ -173,8 +173,8 @@ def run_host_scan(*, ip_range: str, iface: str, port_range: Optional[Union[str, 
         group = Group(*renderables)
         
         panel_title = f"[info_bold]{host.ip_address}[/] - [muted_light]{host.mac_address}[/]"
-        if host.vendor and host.vendor != "Unknown":
-            panel_title += f" [success]({host.vendor})[/]"
+        vendor_name = host.short_vendor if host.short_vendor else "Unknown"
+        panel_title += f" [success]({vendor_name})[/]"
             
         panel = Panel(
             group,

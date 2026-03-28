@@ -63,12 +63,12 @@ class NetworkMapperGUI(tb.Window):
 
         # --- LEFT PANEL: Discovery View ---
         self.left_frame = tb.Frame(self.paned_window)
-        self.paned_window.add(self.left_frame, weight=1)
+        self.paned_window.add(self.left_frame, weight=3)
         self.setup_discovery_ui()
 
         # --- RIGHT PANEL: Notebook Workspace ---
         self.right_frame = tb.Frame(self.paned_window)
-        self.paned_window.add(self.right_frame, weight=3)
+        self.paned_window.add(self.right_frame, weight=2)
 
         self.notebook = tb.Notebook(self.right_frame)
         self.notebook.pack(fill=BOTH, expand=True)
@@ -258,7 +258,7 @@ class NetworkMapperGUI(tb.Window):
         for i, host in enumerate(hosts):
             open_ports_count = len([p for p in host.ports if p.status == "open"])
             port_summary = f"{open_ports_count}" if open_ports_count > 0 else "—"
-            vendor_guess = host.vendor if host.vendor else "Unknown"
+            vendor_guess = host.short_vendor if host.short_vendor else "Unknown"
             os_guess = host.os if host.os else "Unknown"
 
             self.host_tree.insert("", END, iid=str(i),
@@ -281,7 +281,7 @@ class NetworkMapperGUI(tb.Window):
         # Update Target Info tab
         self.tgt_ip_lbl.config(text=self.active_host.ip_address)
         self.tgt_mac_lbl.config(text=self.active_host.mac_address)
-        self.tgt_ven_lbl.config(text=self.active_host.vendor or "Unknown")
+        self.tgt_ven_lbl.config(text=self.active_host.long_vendor or "Unknown Vendor")
         self.tgt_os_lbl.config(text=self.active_host.os or "Unknown")
 
         # Enable Target Tabs
