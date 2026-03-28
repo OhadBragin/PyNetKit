@@ -209,7 +209,8 @@ class ArpPoisoning:
         sniffs traffic to forward it while the attack is running.
         :return: None
         """
-        sniff(iface=self.iface, prn=self.forward_packet, stop_filter=lambda x: not self.is_running)
+        while self.is_running:
+            sniff(iface=self.iface, prn=self.forward_packet, timeout=1, store=False)
 
     def poison(self) -> None:
         """

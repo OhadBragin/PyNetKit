@@ -5,6 +5,7 @@ import subprocess
 import re
 import platform
 import time
+from sys import exception
 from typing import Optional, Union, Any
 from scapy.all import Ether, ARP, srp1, conf
 
@@ -34,8 +35,8 @@ def get_mac_by_ip(target_ip: str, iface: str, retries: int = 3) -> Optional[str]
             # If we didn't get a response, wait a tiny bit before the next retry
             if i < retries - 1:
                 time.sleep(0.5)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error getting MAC address: {e}")
 
     return None
 
@@ -56,8 +57,8 @@ def get_gateway(iface: Optional[str] = None) -> Optional[str]:
             output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
             if output and is_valid_ip(output) and output != '0.0.0.0':
                 return output
-        except:
-            pass
+        except Exception as e:
+            print(f"Error getting gateway IP: {e}")
 
         # Windows Fallback: Parse 'route print'
         try:
@@ -69,8 +70,8 @@ def get_gateway(iface: Optional[str] = None) -> Optional[str]:
                         gw = parts[2] # Gateway is the 3rd column
                         if is_valid_ip(gw) and gw != '0.0.0.0':
                             return gw
-        except:
-            pass
+        except Exception as e:
+            print(f"Error getting gateway IP: {e}")
 
     # 2. macOS: Use 'route -n get default'
     elif system == 'Darwin':
@@ -79,8 +80,8 @@ def get_gateway(iface: Optional[str] = None) -> Optional[str]:
             match = re.search(r"gateway:\s+([\d\.]+)", output)
             if match:
                 return match.group(1)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error getting gateway IP: {e}")
 
     # 3. Linux / WSL: Use 'ip route'
     else:
@@ -89,8 +90,8 @@ def get_gateway(iface: Optional[str] = None) -> Optional[str]:
             match = re.search(r"via\s+([\d\.]+)", output)
             if match:
                 return match.group(1)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error getting gateway IP: {e}")
 
     # 4. Final Fallback: Scapy's internal routing table
     gw = getattr(conf.route, 'gw', None)
@@ -231,8 +232,8 @@ def get_friendly_iface_name(scapy_iface_name: str) -> str:
         for iface in get_windows_if_list():
             if iface['name'] == scapy_iface_name:
                 return iface['description']
-    except:
-        pass
+    except Exception as e:
+        print(f"Error getting interface alias: {e}")
     return scapy_iface_name
 
 def set_static_arp(iface_name: str, ip: str, mac: str) -> None:
@@ -253,15 +254,15 @@ def set_static_arp(iface_name: str, ip: str, mac: str) -> None:
 
             update_cmd = ["powershell", "-Command", f"Set-NetNeighbor -InterfaceAlias '{friendly_name}' -IPAddress '{ip}' -LinkLayerAddress '{mac}' -State Permanent -ErrorAction SilentlyContinue"]
             subprocess.run(update_cmd, capture_output=True)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error setting network interface alias: {e}")
     else:
         # Linux/Unix equivalent
         try:
             subprocess.run(["ip", "neigh", "replace", ip, "lladdr", mac, "dev", iface_name, "nud", "permanent"],
                            capture_output=True, check=False)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error setting static ARP entry: {e}")
 
 def remove_static_arp(iface_name: str, ip: str) -> None:
     """
@@ -276,15 +277,15 @@ def remove_static_arp(iface_name: str, ip: str) -> None:
             # Remove the neighbor entry so it reverts to standard dynamic discovery
             cmd = ["powershell", "-Command", f"Remove-NetNeighbor -InterfaceAlias '{friendly_name}' -IPAddress '{ip}' -Confirm:$false -ErrorAction SilentlyContinue"]
             subprocess.run(cmd, capture_output=True)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error removing static ARP entry: {e}")
     else:
         # Linux/Unix equivalent
         try:
             subprocess.run(["ip", "neigh", "del", ip, "dev", iface_name],
                            capture_output=True, check=False)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error removing static ARP entry: {e}")
 
 def is_admin() -> bool:
     """
