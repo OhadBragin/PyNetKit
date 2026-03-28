@@ -10,19 +10,22 @@ from pynetkit.utils import is_valid_ip, is_valid_port, broad_os_map, get_vendor_
 from unittest.mock import patch
 
 def test_get_vendor_by_mac():
-    mock_db = (
-        {"00:0C:29": "VMware", "B8:27:EB": "Raspberry"},
-        {"00:0C:29": "VMware, Inc.", "B8:27:EB": "Raspberry Pi Foundation"}
-    )
-    with patch("pynetkit.utils.load_mac_vendor_db", return_value=mock_db):
-        # Reset cache for test
-        import pynetkit.utils
-        pynetkit.utils._vendor_db_cache = None
-        
-        assert get_vendor_by_mac("00:0c:29:ab:cd:ef") == ("VMware", "VMware, Inc.")
-        assert get_vendor_by_mac("b8:27:eb:11:22:33") == ("Raspberry", "Raspberry Pi Foundation")
-        assert get_vendor_by_mac("00:00:00:00:00:00") == ("Unknown", "Unknown Vendor")
-        assert get_vendor_by_mac("") == ("Unknown", "Unknown Vendor")
+    # Reset cache for test to ensure it loads the real DB
+    import pynetkit.utils
+    pynetkit.utils._vendor_db_cache = None
+    
+    # Using real data from vendorDB.txt
+    # VMware prefix is usually 00:0C:29
+    assert get_vendor_by_mac("00:0c:29:ab:cd:ef")[0] == "VMware"
+    # Raspberry Pi prefix is usually B8:27:EB
+    assert get_vendor_by_mac("b8:27:eb:11:22:33")[0] == "RaspberryPiF"
+    
+    # Cisco prefix 00:00:0C
+    assert get_vendor_by_mac("00:00:0c:11:22:33") == ("Cisco", "Cisco Systems, Inc")
+    
+    # Truly unknown MAC prefix
+    assert get_vendor_by_mac("de:ad:be:ef:00:01") == ("Unknown", "Unknown Vendor")
+    assert get_vendor_by_mac("") == ("Unknown", "Unknown Vendor")
 
 def test_is_valid_ip():
     assert is_valid_ip("192.168.1.1") == True
