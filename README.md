@@ -67,7 +67,7 @@ The toolkit is structured around three concerns: **discovery** (find hosts and o
 <div align="center">
 
 **GUI - Host Discovery and Commands**
-
+> *Scanning a subnet, inspecting discovered hosts, showcasing Global Tools, and navigating the per-host attack tabs (Target Info, Port Scanner, ARP Poisoning, DoS).*
 
 ![GUI Overview Demo](pynetkit/resources/gui.gif)
 
