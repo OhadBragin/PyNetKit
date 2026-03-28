@@ -5,7 +5,6 @@ import subprocess
 import re
 import platform
 import time
-from sys import exception
 from typing import Optional, Union, Any
 from scapy.all import Ether, ARP, srp1, conf
 

@@ -162,7 +162,7 @@ class ArpPoisoning:
                 try:
                     self.pcap_writer.write(pkt)
                 except Exception as e:
-                    pass # Silently fail to avoid console spam during high-volume forwarding
+                    print(f"Error saving packet to capture: {e}")
             sendp(pkt, verbose=False, iface=self.iface)
 
         # traffic from gateway to target
@@ -173,7 +173,7 @@ class ArpPoisoning:
                 try:
                     self.pcap_writer.write(pkt)
                 except Exception as e:
-                    pass
+                    print(f"Error saving packet to capture: {e}")
             sendp(pkt, verbose=False, iface=self.iface)
 
     def restore_tables(self) -> None:

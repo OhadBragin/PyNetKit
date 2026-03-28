@@ -39,7 +39,7 @@ class NetworkScanner:
         ans_arp, _ = srp(pkts_arp, timeout=1, iface=self.iface, verbose=False)
         for _, rcv in ans_arp:
             host = models.Host(ip_address=rcv[ARP].psrc, mac_address=rcv[ARP].hwsrc)
-            host.short_vendor, host.long_vendor = get_vendor_by_mac(host.mac_address.upper())
+            host.short_vendor, host.long_vendor = get_vendor_by_mac(host.mac_address)
             self.hosts.append(host)
 
     def scan_ports(self, host_obj: models.Host) -> None:

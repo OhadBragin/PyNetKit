@@ -9,7 +9,7 @@ from scapy.all import conf
 
 from .scanner import NetworkScanner, TraceScanner
 from .attacks import ArpPoisoning, DHCPStarvation, SingleTargetDos
-from .utils import get_gateway, get_mac_by_ip, is_valid_ip
+from .utils import get_gateway, get_mac_by_ip, is_valid_ip, set_static_arp, remove_static_arp
 from . import models
 
 
@@ -35,10 +35,80 @@ class NetworkMapperGUI(tb.Window):
         self.st_dos_attack: Optional[SingleTargetDos] = None
         self.dhcp_attack: Optional[DHCPStarvation] = None
 
+        # Track the gateway IP that was shielded so we can remove it on stop/close
+        self._shielded_gw_ip: Optional[str] = None
+        self._shielded_gw_iface: Optional[str] = None
+
         self.setup_ui()
         self.select_default_interface()
 
+        # Intercept window close so active attacks are stopped and ARP tables
+        # are restored before the process exits.
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
         self.after(100, lambda: self.geometry("1150x650"))
+
+    # ------------------------------------------------------------------
+    # Window close
+    # ------------------------------------------------------------------
+
+    def _on_close(self) -> None:
+        """
+        Gracefully stops any running attacks before destroying the window.
+        Runs cleanup in a background thread so the UI can show a message
+        without blocking, then destroys the window once done.
+        :return: None
+        """
+        any_running = (
+            (self.arp_attack and self.arp_attack.is_running)
+            or (self.st_dos_attack and self.st_dos_attack.is_running)
+            or (self.dhcp_attack and self.dhcp_attack.is_running)
+        )
+        if any_running:
+            if not messagebox.askokcancel(
+                "Attack running",
+                "An attack is still active. Stop it and close?",
+            ):
+                return
+
+        threading.Thread(target=self._cleanup_and_destroy, daemon=True).start()
+
+    def _cleanup_and_destroy(self) -> None:
+        """
+        Stops all active attacks and restores ARP tables, then closes the window.
+        Runs on a background thread to avoid blocking the Tk event loop.
+        :return: None
+        """
+        if self.arp_attack and self.arp_attack.is_running:
+            try:
+                self.arp_attack.stop()
+            except Exception:
+                pass
+
+        if self.st_dos_attack and self.st_dos_attack.is_running:
+            try:
+                self.st_dos_attack.stop()
+            except Exception:
+                pass
+
+        if self.dhcp_attack and self.dhcp_attack.is_running:
+            try:
+                self.dhcp_attack.stop()
+            except Exception:
+                pass
+
+        # Remove ARP shield if one was set
+        if self._shielded_gw_ip and self._shielded_gw_iface:
+            try:
+                remove_static_arp(self._shielded_gw_iface, self._shielded_gw_ip)
+            except Exception:
+                pass
+            self._shielded_gw_ip = None
+            self._shielded_gw_iface = None
+
+        self.after(0, self.destroy)
+
+    # ------------------------------------------------------------------
 
     def populate_interfaces(self) -> None:
         for iface in get_working_ifaces():
@@ -686,6 +756,13 @@ class NetworkMapperGUI(tb.Window):
                 self.after(0, self._on_arp_error, "Failed to resolve Gateway MAC.")
                 return
 
+            # --- ARP SHIELD START ---
+            # Set a static ARP entry so the attacker's own machine ignores
+            # the spoofed packets, mirroring what the CLI does.
+            set_static_arp(iface, gw_ip, gw_mac)
+            self._shielded_gw_ip = gw_ip
+            self._shielded_gw_iface = iface
+
             gateway = models.Host(ip_address=gw_ip, mac_address=gw_mac)
             if self.active_host is None: return
             self.arp_attack = ArpPoisoning(self.active_host, gateway, iface, do_save, spoofed_ip, orig_domain)
@@ -714,6 +791,17 @@ class NetworkMapperGUI(tb.Window):
             if self.arp_attack: self.arp_attack.stop()
         except Exception:
             pass
+
+        # --- ARP SHIELD END ---
+        # Revert the gateway's static entry back to dynamic discovery.
+        if self._shielded_gw_ip and self._shielded_gw_iface:
+            try:
+                remove_static_arp(self._shielded_gw_iface, self._shielded_gw_ip)
+            except Exception:
+                pass
+            self._shielded_gw_ip = None
+            self._shielded_gw_iface = None
+
         self.after(0, self._on_arp_stopped)
 
     def _on_arp_stopped(self) -> None:
