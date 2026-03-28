@@ -22,6 +22,7 @@ class NetworkMapperGUI(tb.Window):
         super().__init__(themename="darkly")
         self.title("PyNetKit")
         self.geometry("1150x650")
+        self.minsize(820, 520)
 
         self.interfaces: Dict[str, str] = {}
         self.populate_interfaces()
@@ -56,6 +57,34 @@ class NetworkMapperGUI(tb.Window):
             if self.interfaces:
                 self.iface_combo.current(0)
 
+    def _bind_wraplength(self, label: tb.Label, offset: int = 4) -> None:
+        """Keep label.wraplength == label's actual pixel width minus *offset*."""
+        label.configure(wraplength=400)
+        def _on_resize(event: Any) -> None:
+            label.configure(wraplength=max(50, event.width - offset))
+        label.bind("<Configure>", _on_resize, add="+")
+
+    def _enforce_sash_limits(self, event: Any = None) -> None:
+        """Schedule a sash clamp via after_idle so it always runs after the
+        platform has finished processing the drag/resize event.  Calling
+        sashpos() synchronously inside <B1-Motion> works on Windows but
+        causes visible jitter on macOS where the sash position is committed
+        only after the native handler returns."""
+        self.after_idle(self._do_clamp_sash)
+
+    def _do_clamp_sash(self) -> None:
+        """Clamp sash position so neither pane drops below its minimum width."""
+        try:
+            total = self.paned_window.winfo_width()
+            if total < 10:
+                return
+            pos = self.paned_window.sashpos(0)
+            clamped = max(320, min(pos, total - 310))
+            if clamped != pos:
+                self.paned_window.sashpos(0, clamped)
+        except Exception:
+            pass
+
     def setup_ui(self) -> None:
         # Create a PanedWindow to split LEFT (Discovery) and RIGHT (Workspace)
         self.paned_window = tb.Panedwindow(self, orient=HORIZONTAL)
@@ -70,26 +99,26 @@ class NetworkMapperGUI(tb.Window):
         self.right_frame = tb.Frame(self.paned_window)
         self.paned_window.add(self.right_frame, weight=2)
 
+        self.paned_window.bind("<Configure>",      self._enforce_sash_limits, add="+")
+        self.paned_window.bind("<ButtonRelease-1>", self._enforce_sash_limits, add="+")
+
         self.notebook = tb.Notebook(self.right_frame)
         self.notebook.pack(fill=BOTH, expand=True)
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
         # 1. Global Tools (Always Enabled)
-        # Changed autohide to False to prevent UI layout shifting
         self.global_tab_wrapper = tb.Frame(self.notebook, padding="15")
         self.global_tab = ScrolledFrame(self.global_tab_wrapper, autohide=False)
         self.global_tab.pack(fill=BOTH, expand=True)
         self.notebook.add(self.global_tab_wrapper, text="Global Tools")
 
         # 2. Target Info Summary (Disabled by default)
-        # Bypassed ScrolledFrame entirely because the info fits natively
         self.info_tab_wrapper = tb.Frame(self.notebook, padding="15")
         self.info_tab = tb.Frame(self.info_tab_wrapper)
         self.info_tab.pack(fill=BOTH, expand=True)
         self.notebook.add(self.info_tab_wrapper, text="Target Info", state="disabled")
 
         # 3. Port Scanner (Disabled by default)
-        # FIX: Removed ScrolledFrame entirely to fix the Treeview shrinking glitch
         self.ports_tab_wrapper = tb.Frame(self.notebook, padding="15")
         self.ports_tab = tb.Frame(self.ports_tab_wrapper)
         self.ports_tab.pack(fill=BOTH, expand=True)
@@ -137,10 +166,11 @@ class NetworkMapperGUI(tb.Window):
         self.scan_ports_check.pack(anchor=W, pady=(0, 5))
 
         self.port_range_frame = tb.Frame(controls_frame)
-        tb.Label(self.port_range_frame, text="Ports:").pack(side=LEFT)
+        self.port_range_frame.columnconfigure(1, weight=1)
+        tb.Label(self.port_range_frame, text="Ports:").grid(row=0, column=0, sticky=W)
         self.port_entry = tb.Entry(self.port_range_frame, width=15)
         self.port_entry.insert(0, "20-1000")
-        self.port_entry.pack(side=LEFT, padx=5)
+        self.port_entry.grid(row=0, column=1, sticky=EW, padx=5)
 
         self.scan_btn = tb.Button(controls_frame, text="Start Scan", command=self.start_host_scan, bootstyle=SUCCESS)
         self.scan_btn.pack(fill=X, pady=(15, 5))
@@ -180,7 +210,7 @@ class NetworkMapperGUI(tb.Window):
 
     def toggle_port_range_ui(self) -> None:
         if self.scan_ports_var.get():
-            self.port_range_frame.pack(anchor=W, pady=(0, 5))
+            self.port_range_frame.pack(fill=X, anchor=W, pady=(0, 5))
         else:
             self.port_range_frame.pack_forget()
 
@@ -311,26 +341,29 @@ class NetworkMapperGUI(tb.Window):
 
     # --- TAB 1: GLOBAL TOOLS (Traceroute & DHCP) ---
     def setup_global_tools_ui(self) -> None:
-        # Traceroute Section
+        # ── Traceroute Section ──────────────────────────────────────────────
         trace_frame = tb.Labelframe(self.global_tab.container, text="Global Traceroute", padding=15, bootstyle=PRIMARY)
         trace_frame.pack(fill=X, pady=(0, 15))
 
         t_ctrl = tb.Frame(trace_frame)
         t_ctrl.pack(fill=X, pady=(0, 10))
+        t_ctrl.columnconfigure(1, weight=1)
 
-        tb.Label(t_ctrl, text="Target IP/Domain:", font=("Helvetica", 10)).pack(side=LEFT, padx=(0, 5))
-        self.trace_target_entry = tb.Entry(t_ctrl, width=25)
-        self.trace_target_entry.pack(side=LEFT, padx=(0, 15))
+        tb.Label(t_ctrl, text="Target IP/Domain:", font=(None, 10)).grid(
+            row=0, column=0, sticky=W, padx=(0, 5), pady=(0, 4))
+        self.trace_target_entry = tb.Entry(t_ctrl)
+        self.trace_target_entry.grid(row=0, column=1, columnspan=2, sticky=EW, pady=(0, 4))
 
-        tb.Label(t_ctrl, text="Max Hops:", font=("Helvetica", 10)).pack(side=LEFT, padx=(0, 5))
+        tb.Label(t_ctrl, text="Max Hops:", font=(None, 10)).grid(
+            row=1, column=0, sticky=W, padx=(0, 5), pady=(0, 4))
         self.hops_entry = tb.Entry(t_ctrl, width=8)
         self.hops_entry.insert(0, "30")
-        self.hops_entry.pack(side=LEFT, padx=(0, 15))
+        self.hops_entry.grid(row=1, column=1, sticky=W, padx=(0, 10), pady=(0, 4))
 
         self.trace_btn = tb.Button(t_ctrl, text="Start Trace", command=self.start_trace, bootstyle=PRIMARY)
-        self.trace_btn.pack(side=LEFT)
+        self.trace_btn.grid(row=1, column=2, sticky=W, pady=(0, 4))
 
-        # FIX: Added a dedicated frame + native scrollbar to prevent the Treeview bug
+        # Traceroute result tree (dedicated frame + native scrollbar)
         self.trace_tree_container = tb.Frame(trace_frame)
         self.trace_tree_container.pack(fill=BOTH, expand=True)
 
@@ -339,7 +372,8 @@ class NetworkMapperGUI(tb.Window):
         columns = ("Hop", "IP Address", "Time")
         self.trace_tree = tb.Treeview(self.trace_tree_container, columns=columns, show="headings", bootstyle=PRIMARY,
                                       height=8)
-        for col in columns: self.trace_tree.heading(col, text=col)
+        for col in columns:
+            self.trace_tree.heading(col, text=col)
         self.trace_tree.column("Hop", width=60, anchor=CENTER)
         self.trace_tree.column("IP Address", width=300, anchor=W)
         self.trace_tree.column("Time", width=150, anchor=W)
@@ -350,14 +384,20 @@ class NetworkMapperGUI(tb.Window):
         self.trace_tree.pack(side=LEFT, fill=BOTH, expand=True)
         vsb.pack(side=RIGHT, fill=Y)
 
-        # DHCP Section
+        # ── DHCP Section ────────────────────────────────────────────────────
         dhcp_frame = tb.Labelframe(self.global_tab.container, text="DHCP Starvation (Network-Wide)", padding=15,
                                    bootstyle=DANGER)
         dhcp_frame.pack(fill=X, pady=10)
 
-        tb.Label(dhcp_frame,
-                 text="WARNING: Floods the network with DHCP requests, exhausting the pool for ALL devices.",
-                 bootstyle=WARNING).pack(anchor=W, pady=(0, 10))
+        dhcp_warn_lbl = tb.Label(
+            dhcp_frame,
+            text="WARNING: Floods the network with DHCP requests, exhausting the pool for ALL devices.",
+            bootstyle=WARNING,
+            wraplength=400,
+            justify=LEFT,
+        )
+        dhcp_warn_lbl.pack(anchor=W, fill=X, pady=(0, 10))
+        self._bind_wraplength(dhcp_warn_lbl)
 
         d_ctrl = tb.Frame(dhcp_frame)
         d_ctrl.pack(fill=X)
@@ -368,75 +408,75 @@ class NetworkMapperGUI(tb.Window):
         self.dhcp_stop_btn.pack(side=LEFT, ipadx=5, ipady=5)
 
         self.dhcp_status_lbl = tb.Label(dhcp_frame, text="Status: Ready", bootstyle=SUCCESS,
-                                        font=("Helvetica", 10, "bold"))
-        self.dhcp_status_lbl.pack(anchor=W, pady=(15, 0))
+                                        font=(None, 10, "bold"), wraplength=400, justify=LEFT)
+        self.dhcp_status_lbl.pack(anchor=W, fill=X, pady=(15, 0))
+        self._bind_wraplength(self.dhcp_status_lbl)
 
     # --- TAB 2: TARGET INFO ---
     def setup_target_info_ui(self) -> None:
         info_frame = tb.Frame(self.info_tab)
         info_frame.pack(fill=BOTH, expand=True, pady=20, padx=20)
 
-        tb.Label(info_frame, text="Active Target Overview", font=("Helvetica", 16, "bold"), bootstyle=INFO).grid(row=0,
-                                                                                                                 column=0,
-                                                                                                                 columnspan=2,
-                                                                                                                 sticky=W,
-                                                                                                                 pady=(
-                                                                                                                     0,
-                                                                                                                     20))
+        info_frame.columnconfigure(0, weight=0)
+        info_frame.columnconfigure(1, weight=1)
 
-        tb.Label(info_frame, text="IP Address:", font=("Helvetica", 12)).grid(row=1, column=0, sticky=W, pady=10,
-                                                                              padx=(0, 20))
-        self.tgt_ip_lbl = tb.Label(info_frame, text="-", font=("Helvetica", 12, "bold"))
-        self.tgt_ip_lbl.grid(row=1, column=1, sticky=W, pady=10)
+        tb.Label(info_frame, text="Active Target Overview",
+                 font=(None, 16, "bold"), bootstyle=INFO).grid(
+            row=0, column=0, columnspan=2, sticky=W, pady=(0, 20))
 
-        tb.Label(info_frame, text="MAC Address:", font=("Helvetica", 12)).grid(row=2, column=0, sticky=W, pady=10,
-                                                                               padx=(0, 20))
-        self.tgt_mac_lbl = tb.Label(info_frame, text="-", font=("Helvetica", 12, "bold"))
-        self.tgt_mac_lbl.grid(row=2, column=1, sticky=W, pady=10)
+        fields = [
+            ("IP Address:",       "tgt_ip_lbl",  1),
+            ("MAC Address:",      "tgt_mac_lbl", 2),
+            ("Hardware Vendor:",  "tgt_ven_lbl", 3),
+            ("Operating System:", "tgt_os_lbl",  4),
+        ]
+        for field_text, attr, row in fields:
+            tb.Label(info_frame, text=field_text, font=(None, 12)).grid(
+                row=row, column=0, sticky=W, pady=10, padx=(0, 20))
 
-        tb.Label(info_frame, text="Hardware Vendor:", font=("Helvetica", 12)).grid(row=3, column=0, sticky=W, pady=10,
-                                                                                   padx=(0, 20))
-        self.tgt_ven_lbl = tb.Label(info_frame, text="-", font=("Helvetica", 12, "bold"))
-        self.tgt_ven_lbl.grid(row=3, column=1, sticky=W, pady=10)
-
-        tb.Label(info_frame, text="Operating System:", font=("Helvetica", 12)).grid(row=4, column=0, sticky=W, pady=10,
-                                                                                    padx=(0, 20))
-        self.tgt_os_lbl = tb.Label(info_frame, text="-", font=("Helvetica", 12, "bold"))
-        self.tgt_os_lbl.grid(row=4, column=1, sticky=W, pady=10)
+            val_lbl = tb.Label(info_frame, text="-", font=(None, 12, "bold"),
+                               wraplength=300, justify=LEFT)
+            val_lbl.grid(row=row, column=1, sticky=EW, pady=10)
+            setattr(self, attr, val_lbl)
+            self._bind_wraplength(val_lbl)
 
     # --- TAB 3: PORT SCANNER ---
     def setup_ports_ui(self) -> None:
         top_frame = tb.Frame(self.ports_tab)
         top_frame.pack(fill=X, pady=(0, 15))
 
-        tb.Label(top_frame, text="Port Range:", font=("Helvetica", 11)).grid(row=0, column=0, sticky=W, padx=(0, 5),
-                                                                             pady=5)
+        top_frame.columnconfigure(1, weight=1)
+        top_frame.columnconfigure(3, weight=1)
+
+        tb.Label(top_frame, text="Port Range:", font=(None, 11)).grid(
+            row=0, column=0, sticky=W, padx=(0, 5), pady=5)
         self.detail_port_entry = tb.Entry(top_frame, width=15)
         self.detail_port_entry.insert(0, "20-1000")
-        self.detail_port_entry.grid(row=0, column=1, sticky=W, padx=(0, 15), pady=5)
+        self.detail_port_entry.grid(row=0, column=1, sticky=EW, padx=(0, 15), pady=5)
 
-        self.target_scan_btn = tb.Button(top_frame, text="Scan Target Ports", command=self.scan_target_ports,
-                                         bootstyle=SUCCESS)
-        self.target_scan_btn.grid(row=0, column=2, sticky=W, padx=(0, 15), pady=5)
+        self.target_scan_btn = tb.Button(top_frame, text="Scan Target Ports",
+                                         command=self.scan_target_ports, bootstyle=SUCCESS)
+        self.target_scan_btn.grid(row=0, column=2, columnspan=2, sticky=W, padx=(0, 15), pady=5)
 
-        tb.Label(top_frame, text="Status Filter:", font=("Helvetica", 11)).grid(row=1, column=0, sticky=W, padx=(0, 5),
-                                                                                pady=5)
+        tb.Label(top_frame, text="Status Filter:", font=(None, 11)).grid(
+            row=1, column=0, sticky=W, padx=(0, 5), pady=5)
         self.status_filter_var = tb.StringVar(value="open")
         self.status_combo = tb.Combobox(top_frame, textvariable=self.status_filter_var,
-                                        values=["All", "open", "closed", "filtered", "open|filtered"], state="readonly",
-                                        width=12, bootstyle=PRIMARY)
-        self.status_combo.grid(row=1, column=1, sticky=W, pady=5)
+                                        values=["All", "open", "closed", "filtered", "open|filtered"],
+                                        state="readonly", width=12, bootstyle=PRIMARY)
+        self.status_combo.grid(row=1, column=1, sticky=EW, pady=5)
         self.status_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_ports_tab())
 
-        tb.Label(top_frame, text="Proto Filter:", font=("Helvetica", 11)).grid(row=1, column=2, sticky=W, padx=(0, 5),
-                                                                               pady=5)
+        tb.Label(top_frame, text="Proto Filter:", font=(None, 11)).grid(
+            row=1, column=2, sticky=W, padx=(0, 5), pady=5)
         self.proto_filter_var = tb.StringVar(value="All")
-        self.proto_combo = tb.Combobox(top_frame, textvariable=self.proto_filter_var, values=["All", "TCP", "UDP"],
+        self.proto_combo = tb.Combobox(top_frame, textvariable=self.proto_filter_var,
+                                       values=["All", "TCP", "UDP"],
                                        state="readonly", width=10, bootstyle=PRIMARY)
-        self.proto_combo.grid(row=1, column=3, sticky=W, pady=5)
+        self.proto_combo.grid(row=1, column=3, sticky=EW, pady=5)
         self.proto_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_ports_tab())
 
-        # FIX: Added a dedicated frame + native scrollbar to prevent the Treeview bug
+        # Port results tree
         self.port_tree_container = tb.Frame(self.ports_tab)
         self.port_tree_container.pack(fill=BOTH, expand=True)
 
@@ -460,7 +500,6 @@ class NetworkMapperGUI(tb.Window):
         self.ports_need_refresh = False
         self.port_tree.delete(*self.port_tree.get_children())
 
-        # FIX: Directly acknowledge user inside the table if absolutely NO ports were found
         if not self.active_host.ports:
             self.port_tree.insert("", END, values=("-", "-", "No open ports found", "-"))
             return
@@ -481,11 +520,10 @@ class NetworkMapperGUI(tb.Window):
                     continue
 
             self.port_tree.insert("", END,
-                                  values=(port.port_number, port.proto.upper() if port.proto else "N/A", port.status,
-                                          port.service))
+                                  values=(port.port_number, port.proto.upper() if port.proto else "N/A",
+                                          port.status, port.service))
             visible_count += 1
 
-        # FIX: Acknowledge user if they filtered out all the results
         if visible_count == 0:
             self.port_tree.insert("", END, values=("-", "-", "No ports match current filters", "-"))
 
@@ -537,7 +575,6 @@ class NetworkMapperGUI(tb.Window):
                         self.host_tree.set(item, column="os", value=self.active_host.os)
                     break
 
-        # Explicit popup if needed (redundant now but explicit per request)
         if self.active_host and not self.active_host.ports:
             messagebox.showinfo("Scan Complete",
                                 f"No open ports found on {self.active_host.ip_address} in the specified range.")
@@ -552,12 +589,13 @@ class NetworkMapperGUI(tb.Window):
     def setup_arp_ui(self) -> None:
         input_frame = tb.Frame(self.arp_tab.container)
         input_frame.pack(fill=X, pady=(0, 15))
+        input_frame.columnconfigure(1, weight=1)
 
         tb.Label(input_frame, text="Gateway IP:").grid(row=0, column=0, sticky=W, pady=5)
         self.gw_ip_entry = tb.Entry(input_frame, width=30)
         gw = get_gateway()
         if gw: self.gw_ip_entry.insert(0, gw)
-        self.gw_ip_entry.grid(row=0, column=1, sticky=W, pady=5, padx=15)
+        self.gw_ip_entry.grid(row=0, column=1, sticky=EW, pady=5, padx=15)
 
         flags_frame = tb.Labelframe(self.arp_tab.container, text="Attack Options", padding="15", bootstyle=WARNING)
         flags_frame.pack(fill=X, pady=15)
@@ -571,12 +609,13 @@ class NetworkMapperGUI(tb.Window):
                        command=self.toggle_dns_spoof, bootstyle="round-toggle").pack(anchor=W, pady=5)
 
         self.dns_frame = tb.Frame(flags_frame)
+        self.dns_frame.columnconfigure(1, weight=1)
         tb.Label(self.dns_frame, text="Domain to redirect from:").grid(row=0, column=0, sticky=W, pady=5)
         self.orig_domain_entry = tb.Entry(self.dns_frame, width=30)
-        self.orig_domain_entry.grid(row=0, column=1, sticky=W, pady=5, padx=10)
+        self.orig_domain_entry.grid(row=0, column=1, sticky=EW, pady=5, padx=10)
         tb.Label(self.dns_frame, text="Domain/IP to redirect to:").grid(row=1, column=0, sticky=W, pady=5)
         self.spoofed_ip_entry = tb.Entry(self.dns_frame, width=30)
-        self.spoofed_ip_entry.grid(row=1, column=1, sticky=W, pady=5, padx=10)
+        self.spoofed_ip_entry.grid(row=1, column=1, sticky=EW, pady=5, padx=10)
 
         ctrl_frame = tb.Frame(self.arp_tab.container)
         ctrl_frame.pack(fill=X, pady=25)
@@ -587,9 +626,11 @@ class NetworkMapperGUI(tb.Window):
                                       bootstyle=SECONDARY)
         self.arp_stop_btn.pack(side=LEFT, ipadx=10, ipady=5)
 
-        self.arp_status_lbl = tb.Label(self.arp_tab.container, text="Status: Ready", font=("Helvetica", 11, "bold"),
-                                       bootstyle=SUCCESS)
-        self.arp_status_lbl.pack(anchor=W, pady=15)
+        self.arp_status_lbl = tb.Label(self.arp_tab.container, text="Status: Ready",
+                                       font=(None, 11, "bold"), bootstyle=SUCCESS,
+                                       wraplength=400, justify=LEFT)
+        self.arp_status_lbl.pack(anchor=W, fill=X, pady=15)
+        self._bind_wraplength(self.arp_status_lbl)
 
     def toggle_dns_spoof(self) -> None:
         if self.dns_spoof_var.get():
@@ -684,21 +725,28 @@ class NetworkMapperGUI(tb.Window):
                                  bootstyle=DANGER)
         st_frame.pack(fill=X, pady=10)
 
-        tb.Label(st_frame, text="Cuts off the active target from the gateway by poisoning both with dummy MACs.").pack(
-            anchor=W, pady=(0, 15))
+        desc_lbl = tb.Label(
+            st_frame,
+            text="Cuts off the active target from the gateway by poisoning both with dummy MACs.",
+            wraplength=400,
+            justify=LEFT,
+        )
+        desc_lbl.pack(anchor=W, fill=X, pady=(0, 15))
+        self._bind_wraplength(desc_lbl)
 
         st_btn_frame = tb.Frame(st_frame)
         st_btn_frame.pack(fill=X)
         self.st_dos_start_btn = tb.Button(st_btn_frame, text="Start Target DoS", command=self.start_st_dos,
                                           bootstyle=DANGER)
-        self.st_dos_start_btn.grid(row=0, column=0, padx=(0, 15), pady=5, ipadx=5, ipady=5)
+        self.st_dos_start_btn.pack(side=LEFT, padx=(0, 15), pady=5, ipadx=5, ipady=5)
         self.st_dos_stop_btn = tb.Button(st_btn_frame, text="Stop Target DoS", command=self.stop_st_dos, state=DISABLED,
                                          bootstyle=SECONDARY)
-        self.st_dos_stop_btn.grid(row=0, column=1, pady=5, ipadx=5, ipady=5)
+        self.st_dos_stop_btn.pack(side=LEFT, pady=5, ipadx=5, ipady=5)
 
         self.st_dos_status_lbl = tb.Label(st_frame, text="Status: Ready", bootstyle=SUCCESS,
-                                          font=("Helvetica", 10, "bold"))
-        self.st_dos_status_lbl.pack(anchor=W, pady=15)
+                                          font=(None, 10, "bold"), wraplength=400, justify=LEFT)
+        self.st_dos_status_lbl.pack(anchor=W, fill=X, pady=15)
+        self._bind_wraplength(self.st_dos_status_lbl)
 
     def start_st_dos(self) -> None:
         if self.st_dos_attack and self.st_dos_attack.is_running:

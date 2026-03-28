@@ -41,5 +41,8 @@ pynetkit = "pynetkit.main:main"
 [tool.setuptools.packages.find]
 include = ["pynetkit*"]
 
+[tool.setuptools.package-data]
+pynetkit = ["resources/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

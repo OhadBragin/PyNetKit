@@ -7,7 +7,7 @@ import platform
 import time
 from typing import Optional, Union, Any
 from scapy.all import Ether, ARP, srp1, conf
-import requests
+
 
 def get_mac_by_ip(target_ip: str, iface: str, retries: int = 3) -> Optional[str]:
     """
@@ -23,20 +23,20 @@ def get_mac_by_ip(target_ip: str, iface: str, retries: int = 3) -> Optional[str]
             # We send a broadcast ARP request
             # sending 2 packets in one go increases the chance of a response
             arp_request = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=target_ip)
-            
-            # srp1 waits for a single response. 
+
+            # srp1 waits for a single response.
             # We use a 1.5s timeout per attempt.
             response = srp1(arp_request, timeout=1.5, iface=iface, verbose=False)
-            
+
             if response:
                 return response.hwsrc
-                
+
             # If we didn't get a response, wait a tiny bit before the next retry
             if i < retries - 1:
                 time.sleep(0.5)
         except:
             pass
-            
+
     return None
 
 def get_gateway(iface: Optional[str] = None) -> Optional[str]:
@@ -123,12 +123,12 @@ def get_vendor_by_mac(mac: str) -> tuple:
     global _vendor_db_cache
     if _vendor_db_cache is None:
         _vendor_db_cache = load_mac_vendor_db()
-    
+
     short_DB, long_DB = _vendor_db_cache
-    
+
     if not mac:
         return ("Unknown", "Unknown Vendor")
-        
+
     # Standardize MAC to uppercase and take prefix in format XX:XX:XX (8 chars)
     mac_prefix = mac.upper()[:8]
     return (short_DB.get(mac_prefix, "Unknown"), long_DB.get(mac_prefix, "Unknown Vendor"))
@@ -142,11 +142,11 @@ def load_mac_vendor_db() -> tuple:
     short_DB = {}
     long_DB = {}
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    
+
     # Define potential paths for the vendor database
-    
-    path = os.path.join(current_dir, "..", "resources", "vendorDB.txt")    
-    
+
+    path = os.path.join(current_dir, "resources", "vendorDB.txt")
+
     if not path:
         print("debug")
         return short_DB, long_DB
@@ -160,11 +160,11 @@ def load_mac_vendor_db() -> tuple:
                 # split whitepsace
                 parts = line.split()
                 if len(parts) >= 2:
-                    prefix = parts[0] 
+                    prefix = parts[0]
                     short_name = parts[1]
                     # rest is long name
-                    long_name = " ".join(parts[2:]) 
-                    
+                    long_name = " ".join(parts[2:])
+
                     short_DB[prefix] = short_name
                     long_DB[prefix] = long_name
         return (short_DB, long_DB)
@@ -213,12 +213,12 @@ def get_friendly_iface_name(scapy_iface_name: str) -> str:
     """
     if os.name != 'nt':
         return scapy_iface_name
-        
+
     try:
         # Use PowerShell to get the mapping between GUID and Alias
         # This is the most reliable way to get the name netsh/powershell commands want.
         cmd = ["powershell", "-Command", f"Get-NetAdapter | Where-Object {{$_.InterfaceGuid -eq '{scapy_iface_name}' -or $_.DeviceID -eq '{scapy_iface_name}'}} | Select-Object -ExpandProperty Name"]
-        
+
         # If the input was already a friendly name, try to validate it
         if "{" not in scapy_iface_name:
              cmd = ["powershell", "-Command", f"Get-NetAdapter | Where-Object {{$_.Name -eq '{scapy_iface_name}'}} | Select-Object -ExpandProperty Name"]
@@ -226,7 +226,7 @@ def get_friendly_iface_name(scapy_iface_name: str) -> str:
         output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
         if output:
             return output
-            
+
         # Fallback to Scapy's list if PowerShell fails
         from scapy.arch.windows import get_windows_if_list
         for iface in get_windows_if_list():
@@ -251,7 +251,7 @@ def set_static_arp(iface_name: str, ip: str, mac: str) -> None:
             # First try to create it, then try to update it if it already exists
             create_cmd = ["powershell", "-Command", f"New-NetNeighbor -InterfaceAlias '{friendly_name}' -IPAddress '{ip}' -LinkLayerAddress '{mac}' -State Permanent -ErrorAction SilentlyContinue"]
             subprocess.run(create_cmd, capture_output=True)
-            
+
             update_cmd = ["powershell", "-Command", f"Set-NetNeighbor -InterfaceAlias '{friendly_name}' -IPAddress '{ip}' -LinkLayerAddress '{mac}' -State Permanent -ErrorAction SilentlyContinue"]
             subprocess.run(update_cmd, capture_output=True)
         except:
