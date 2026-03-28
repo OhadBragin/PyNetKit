@@ -414,7 +414,7 @@ def trace_scan(*, target: str, max_hops: int = 30) -> None:
         hop_num = str(hop_data["hop"])
         ip = hop_data["ip"]
         rtt = hop_data["time"]
-        table.add_row(hop_num, rtt, f"[success_bold]{ip}[/]" if ip == target_ip else ip)
+        table.add_row(hop_num, rtt, f"[success_bold]{ip}[/]" if hop_data.get("target_reached") else ip)
 
     panel = Panel(
         table,

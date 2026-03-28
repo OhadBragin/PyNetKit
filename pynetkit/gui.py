@@ -384,6 +384,8 @@ class NetworkMapperGUI(tb.Window):
         self.trace_tree.pack(side=LEFT, fill=BOTH, expand=True)
         vsb.pack(side=RIGHT, fill=Y)
 
+        self.trace_tree.tag_configure("target", foreground="lime", font=(None, 10, "bold"))
+
         # ── DHCP Section ────────────────────────────────────────────────────
         dhcp_frame = tb.Labelframe(self.global_tab.container, text="DHCP Starvation (Network-Wide)", padding=15,
                                    bootstyle=DANGER)
@@ -870,7 +872,8 @@ class NetworkMapperGUI(tb.Window):
         self.trace_btn.config(state=NORMAL, text="Start Trace")
 
         for hop in path:
-            self.trace_tree.insert("", END, values=(hop['hop'], hop['ip'], hop['time']))
+            tags = ("target",) if hop.get('target_reached') else ()
+            self.trace_tree.insert("", END, values=(hop['hop'], hop['ip'], hop['time']), tags=tags)
 
     def _on_trace_error(self, err: str) -> None:
         self.trace_progress.stop()

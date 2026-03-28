@@ -131,10 +131,11 @@ class TraceScanner:
         pkt = IP(dst="8.8.8.8") / UDP(dport=53) / DNS(rd=1, qd=DNSQR(qname=hostname, qtype="A"))
         rsp = sr1(pkt, timeout=2, verbose=False)
         if rsp and rsp.haslayer(DNS) and rsp[DNS].ancount > 0:
-            return rsp[DNS].an[0].rdata
-        else:
-            return None
-
+            for i in range(rsp[DNS].ancount):
+                if rsp[DNS].an[i].type == 1:
+                    rdata = rsp[DNS].an[i].rdata
+                    return rdata.decode() if isinstance(rdata, bytes) else rdata
+        return None
     def craft_packet(self, ttl: int) -> IP:
         """
         Crafts an ICMP Echo Request packet with the specified TTL
@@ -158,11 +159,12 @@ class TraceScanner:
             rtt = round((end_time - start_time) * 1000, 2)
             
             if ans is None:
-                self.path.append({"hop": ttl, "ip": "*", "time": "*"})
+                self.path.append({"hop": ttl, "ip": "*", "time": "*", "target_reached": False})
                 continue
             else:
-                self.path.append({"hop": ttl, "ip": ans.src, "time": f"{rtt} ms"})
-                if ans.src == self.target_ip or (ans.haslayer(ICMP) and ans[ICMP].type == 0):
+                target_reached = (ans.src == self.target_ip or (ans.haslayer(ICMP) and ans[ICMP].type in [0, 3]))
+                self.path.append({"hop": ttl, "ip": ans.src, "time": f"{rtt} ms", "target_reached": target_reached})
+                if target_reached:
                     break
 
     def start(self) -> None:
