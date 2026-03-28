@@ -147,8 +147,7 @@ def load_mac_vendor_db() -> tuple:
 
     path = os.path.join(current_dir, "resources", "vendorDB.txt")
 
-    if not path:
-        print("debug")
+    if not os.path.exists(path):
         return short_DB, long_DB
 
     try:
