@@ -103,7 +103,7 @@ def broad_os_map(ttl: int) -> str:
     :return: String describing the likely OS family
     """
     if 0 < ttl <= 64:
-        return "Unix"
+        return "Linux/Unix"
     elif 64 < ttl <= 128:
         return "Windows"
     elif 128 < ttl <= 255:
